@@ -1,0 +1,86 @@
+# --------------------------------------全局通用参数配置--------------------------------------------
+total_episode = 3000                #全局训练的总迭代次数
+BATCH = 64                          #每个轮次执行的步数
+actor_lr = 1e-3                    #动作网络的学习率
+critic_lr = 1e-2                   #评论家网络的学习率
+eps = 0.2                                      # PPO中截断范围的参数
+GAMMA = 0.995                                  # 折扣因子
+BATCH = 64
+LAMBDA = 0.95                                  # GAE优势函数的缩放系数
+tau_1 = 1.0
+tau_2 = 1.0
+punishment = -5                                #没有达到目标时候的惩罚
+
+
+N_DN                                           # 数据节点数
+M_CN                                           # 算力节点数
+
+# --- 物理约束 (映射常数) ---
+max_data_size
+cn_fn  # GHz (fm)
+kappa
+T
+mu_dn
+total_Bw  # MHz (Bandwidth)
+
+#数据节点的通信功率
+P_DN2CN
+P_DNFCN
+P_DN2UAV
+P_DNFUAV
+
+# --- 算力节点数据---
+cn_total_energy
+mu_cn
+P_CN2DN
+P_CNFDN
+P_CN2UAV
+P_CNFUAV
+
+# --- 无人机 ---
+beta_1
+beta_2
+f_p
+E_h
+mu_uav
+P_UAV2DN
+P_UAVFDN
+P_UAVFCN
+
+# --- 环境参数 ---
+tau_dn
+tau_cn
+
+
+# --- 训练参数 ---
+total_episodes
+max_steps_per_ep
+update_timestep # 多少步更新一次？
+
+# --- PPO 参数 ---
+lr_actor
+lr_critic
+gamma
+k_epochs #每轮更新多少次
+eps_clip
+
+# --- 动态学习率调度 ---
+lr_patience
+lr_factor
+self.LR_MIN = self.configDict['lr_min']
+self.LR_THRESHOLD = self.configDict['lr_threshold']
+
+# --- 日志与保存 ---
+self.LOG_INTERVAL = self.configDict['log_interval']
+self.SAVE_INTERVAL = self.configDict['save_interval']
+
+self.cn_list = None
+self.dn_list = None
+# 模型参数
+self.model_param = None
+
+#固定的尾部网络
+self.tail_cmp_energy = 0.0
+self.tail_flops = 0.0
+self.tail_com_data = 0.0
+self.tail_model_size = 0.0
