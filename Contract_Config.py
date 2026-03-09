@@ -18,7 +18,7 @@ class Config:
         self.max_data_size = 120 #MB 数据的总大小为120MB
         self.max_data_count = 10000
         self.MB_unit_ = 8*10e6 #1 MB=8×10^6 bits
-        self.f_n = np.array([1, 1.25]) * 1e9  # GHz (fm) 1GHz = 10e9Hz
+        self.f_n = np.array([1, 1.25]) * 1e9  # GHz (fm) 1GHz = 1e9Hz
         self.kappa = 16 #1bts数据所需要的运行次数
         self.T = 1
         self.mu_dn = np.array([1, 2]) * 1e-28 #硬件系数
@@ -50,6 +50,7 @@ class Config:
         self.beta_1 = 400
         self.beta_2 = 1
         self.alpha_dn = 400
+        self.alpha_dn_fl = 100
         self.f_p = 1.5*1e9 #无人机的CPU
         self.E_h = 0.5
         self.mu_uav = 1e-28

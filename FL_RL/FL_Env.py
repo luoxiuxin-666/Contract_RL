@@ -31,6 +31,7 @@ class DataNode:
         self.D_req = 0
         self.R_offer = 0
         self.utility = 0.0
+        self.T = config_DN.T
 
         # 计算自身的单位能耗系数 (Type)
         self.total_energy = 0.0
@@ -55,8 +56,8 @@ class DataNode:
         计算真实的物理成本 (Energy)
         """
         # 1. 计算能耗
-        e_cmp = D_req * self.unit_cost
-        t_cmp = D_req * self.unit_time
+        e_cmp = D_req * self.unit_cost * self.T
+        t_cmp = D_req * self.unit_time * self.T
 
         # 2. 通信能耗 (上传模型)
         # Rate = B * log2(1 + SINR)
@@ -64,15 +65,14 @@ class DataNode:
         t_trans = self.model_size_mbits / (rate + 1e-9)
         e_com = self.P_tx * t_trans
 
-        total_energy = e_cmp + e_com
+        total_energy = e_cmp + e_com*2
 
         # 3. 计算时间 (用于 UAV 惩罚)
-        total_time = t_cmp + t_trans
+        total_time = t_cmp + t_trans*2
 
         if flag:
             self.total_energy = total_energy
             self.total_time = total_time
-            self.D_req = D_req
 
         return total_energy, total_time
 
@@ -111,6 +111,8 @@ class FL_UAV:
         self.E_h = config.E_h
         self.total_cost = 0.0
         self.utility = 0.0
+        self.alpha_dn = config.alpha_dn_fl
+        self.T = config.T
 
         self.max_time = 0.0
 
@@ -120,14 +122,16 @@ class FL_UAV:
         uti = 0.0
         for dn in dn_list:
             if dn.utility >= 0:  # 只有接受的节点才算
-                gain = self.beta_1 * np.log(1 + dn.D_req)
-                pay = self.beta_2 * dn.R_offer
-                uti += (1 / self.N_DN) * (gain - pay)
-                max_time = max(max_time, dn.unit_time)
+                Dn = dn.D_req   # 缩小一下区间
+                gain = np.log(1 + Dn)
+                pay = dn.R_offer / 500
+                uti += (1 / self.N_DN) * self.alpha_dn * (gain - pay)
+                max_time = max(max_time, dn.total_time)
 
         # 成本: 支付 + 时延惩罚
         # 注意: FL 的时延通常比 SFL 长很多
-        cost = self.E_h * max_time
+        # cost = self.E_h * max_time
+        cost = self.E_h
 
         self.max_time = 0.0
         self.total_cost = 0.0
@@ -274,6 +278,10 @@ class FLEnvironment:
         Dn = action_dict['Dn']
         Rn = action_dict['Rn']
         W = action_dict['bandwidth']
+
+        for i, dn in enumerate(self.DN_list):
+            dn.D_req = Dn[i]
+            dn.R_offer = Rn[i]
 
         # 2. 节点决策
         for i, dn in enumerate(self.DN_list):

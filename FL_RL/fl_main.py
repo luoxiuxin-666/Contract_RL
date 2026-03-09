@@ -102,7 +102,7 @@ class FLExecutionRunner:
                 # 环境内部会进行 IC/IR 检查、能耗计算、奖励计算
                 next_state, reward, done,dn_contract, _ = self.env.step(proc_cont)
 
-                W_all = np.round(proc_cont[:-self.env.N_DN],3) * (self.env.TOTAL_BW/1e6)
+                W_all = np.round(proc_cont[self.env.N_DN:],3) * (self.env.TOTAL_BW/1e6)
 
                 # 2.3 判断终止条件 (Termination vs Truncation)
                 # A. 任务失败/完成 (Done)
@@ -179,8 +179,6 @@ class FLExecutionRunner:
                 self.agent.save(save_path)
                 Log(f"模型保存: {save_path}")
 
-            if i_episode % 1000 == 0:
-                print(f"---the cn is {self.env.uav.data}")
 
 
 # ==========================================
