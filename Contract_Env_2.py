@@ -51,7 +51,8 @@ class DataNode:
         self.f_n = rng.integers(config_DN.f_n[0],config_DN.f_n[1])#cpu处理能力从范围内随机选取
         self.kappa = config_DN.kappa  # 16 FLOPs/cycle
         # 在 Contract_Env.py 第44行之前添加：
-        self.mu_n = rng.uniform(config_DN.mu_dn[0], config_DN.mu_dn[1])
+        # self.mu_n = rng.uniform(config_DN.mu_dn[0], config_DN.mu_dn[1])
+        self.mu_n = config_DN.mu_dn
         # 算力节点的通信条件
         self.P_to_CN = rng.uniform(config_DN.DN_P_1,config_DN.DN_P_2)
         self.P_from_CN = rng.uniform(config_DN.DN_P_1,config_DN.DN_P_2)
@@ -223,6 +224,8 @@ class DataNode:
         self.R_offer = 0.0
         self.energy_cost = 0.0
         self.DN2UAV_W = 0.0
+        self.other_energy = 0.0
+        # self.total_time = 0.0
 
 
 
@@ -343,7 +346,7 @@ class ComputeNode:
         IR 约束: 激励 >= 成本
         """
         total_E,total_time,H_alpha = self.calculate_energy_by_contract(CN2UAV_W,DN_list,f_m,flag)
-        total_E = total_E / 100     # 将数值限制在某个范围
+        # total_E = total_E / 100     # 将数值限制在某个范围
         if flag:
             self.total_E = total_E
         if R_offer is None:
@@ -360,10 +363,12 @@ class ComputeNode:
         return utility
 
     def reset(self):
-        """每轮重置 (如果是多轮连续训练，这里不应该重置电量)"""
         # 这里只重置信道等
         self.total_E = 0.0
         self.R_offer = 0
+        self.H_alpha = 0.0
+        self.fm = 0.0
+        self.DN_list = 0.0
 
 
 
@@ -437,7 +442,7 @@ class UAV:
         }
         return uav_info
 
-    def DN_uti(self,dn,all_action):
+    def DN_uti(self,dn):
         Dn = dn.D_req/500   # 缩小一下区间
         uti = np.log(1+Dn)
         r = dn.R_offer / 500
@@ -452,14 +457,17 @@ class UAV:
         return uti
     def CN_uti(self,cn):
         H_alpha = cn.H_alpha
-        fm = (cn.kappa*cn.fm*cn.max_freq)/1e9
+        if cn.fm <=1:
+            fm = (cn.kappa*cn.fm*cn.max_freq)/1e9
+        else:
+            fm = (cn.kappa*cn.fm)/1e9
         log_1 = np.log(1+H_alpha/500)
         log_2 = (H_alpha/fm)
         A = self.beta_1*log_1
         B = self.beta_2*log_2
         U_p = A - B
         # U_p = A
-        r = cn.R_offer
+        r = cn.R_offer / 100
         Uti = U_p - r
         if Uti < 0:
             print("CN",Uti)
@@ -498,7 +506,7 @@ class Contract_Environment():
         # self.tau_cn = self.cfg.tau_cn
         self.tau_dn = 1/self.N_DN
         self.tau_cn = 1/self.M_CN
-
+        self.max_freq = self.cfg.max_freq
         # 信噪比
         self.UAV2DNSINR = None
         self.UAV2CNSINR = None
@@ -516,7 +524,7 @@ class Contract_Environment():
 
 
 
-        self.init_all_SINR(True)
+        self.init_all_SINR()
         self.init_List()
         self.init_UAV()
 
@@ -538,8 +546,9 @@ class Contract_Environment():
         distributed = generate_balanced_distribution(self.N_DN + self.M_CN)
         distributed = distributed * self.TOTAL_BW   #无人机的总带宽
         CN_len = self.N_DN-1
-        # all_L_c = rng.choice([3, 6, 9], size=self.N_DN, p=[0.4, 0.5, 0.1])
-        all_L_c = [9,3,6,3,3]
+        all_L_c = rng.choice([3, 6, 9], size=self.N_DN, p=[0.4, 0.5, 0.1])
+        # all_L_c = [9,3,6,3,3]
+        # all_L_c = [6, 6, 6, 3, 3] #cn=5
         print("DEBUG : all_L_c is ", all_L_c)
         for i in range(self.N_DN):
             # p 的总和必须为 1，我们假设随机选择分割层
@@ -577,8 +586,9 @@ class Contract_Environment():
         energy_list = [0]*self.M_CN #暂时没用到，先不管他
         type_list = [1.0-(i+1)*0.05 for i in range(self.M_CN)] # 随机分配类型
         # freq_list = [self.base_freq-(i+1)*1.25e9 for i in range(self.M_CN)]
+
         for i in range(self.M_CN):
-            cn = ComputeNode(self.cfg,1e10,energy_list[i],type_list[i],i+1)
+            cn = ComputeNode(self.cfg,self.max_freq,energy_list[i],type_list[i],i+1)
             cn.CN2DN_SINR = self.base_channel_quality
             cn.CN2UAV_SINR = self.CN2UAVSINR[i]
             cn.CN2UAV_W = distributed[CN_len+i]
@@ -694,54 +704,8 @@ class Contract_Environment():
         fm_phys = fm_phys * 0.9 + 0.1
         bw_ratios = proc_cont[N + M:-M]
         W_phys = bw_ratios * self.TOTAL_BW
-
-        Rn_desc = np.zeros(N)
-        Uti_DN = np.zeros(N)  # 记录净效用
-
-        # 如果需要的话，应该如何分配？优先给算力更大的带宽？
-        # 从最差的节点 (Index N-1) 开始，倒着推到最好的节点 (Index 0)
-        for k in range(N - 1, -1, -1):
-            # 获取最后对应位置的数据节点
-            dn = self.DN_list[k]
-            w = W_phys[k]
-            dn.DN2UAV_W = w
-            # 当前合同的理论数据量
-            data_curr = Dn_phys[k]
-            # 计算合理的数据量对应的能耗
-            cost_curr_own = dn.evaluate_contract(w,data_curr,Flag=True)
-
-            # 先生成满足IC的合同
-            if k == N - 1:
-                # --- Base Case: 最差类型 (Type Worst) ---
-                # 约束：IR (个人理性) 紧致 -> 效用为 0
-                # R = Cost * Data
-                Uti_DN[k] = 0
-                Rn_desc[k] = cost_curr_own
-
-            else:
-                # 获取下一级的合同的类型
-                dn_ic = self.DN_list[k + 1]
-                dn_copy = copy.deepcopy(dn_ic)
-                dn_copy.unit_cost = dn.unit_cost
-
-                w_ic = W_phys[k + 1]
-                data_ic = Dn_phys[k + 1]
-
-                cost_worse = dn_ic.evaluate_contract(w_ic,data_ic)
-
-                # 当前节点获取下一个节点的合同的能耗
-                cost_curr_mimic = dn_copy.evaluate_contract(w_ic,data_ic)
-
-                # 计算租金增量：(差人成本 - 好人成本) * 差人任务量
-                rent_increment = cost_worse - cost_curr_mimic
-                if rent_increment < 0:
-                    print("DN is error!!!")
-
-                # 当前好人的总效用 = 差人的效用 + 新增租金
-                Uti_DN[k] = Uti_DN[k + 1] + rent_increment
-
-                # 最终激励 = 物理成本 + 净效用(租金)
-                Rn_desc[k] = cost_curr_own + Uti_DN[k]
+        W = W_phys[:N]
+        Rn_desc = self.calculate_dn_contract(Dn_phys, N, W)
 
         # 映射回原始顺序
         for k in range(N):
@@ -768,17 +732,27 @@ class Contract_Environment():
                 sort_dn_list[cn_idx].append(self.DN_list[id])  # 将对应的DN存给对应的cn
 
         self.sort_idx = sort_idx
+        W = W_phys[N:]
+        Rm = self.calculate_cn_contract(M, W, fm_sort, sort_dn_list)
+
+        return {
+            'Dn': Dn_phys, 'Rn': Rn_desc,
+            'Rm': Rm, 'fm': fm_sort,
+            'cn2dn_list': sort_dn_list,
+            'bandwidth': W_phys,
+            'group': sort_group_idx
+        }
+
+    def calculate_cn_contract(self, M, W_phys, fm_sort, sort_dn_list):
         Rm = np.zeros(M)
         Uti_CN = np.zeros(M)
-
         # 计算对应的能耗
         cost_list = self.Cn_cost(sort_dn_list, fm_sort, W_phys)
-
         cost_self = np.zeros(M)
         for k in range(M - 1, -1, -1):
             # 获取最后对应位置的数据节点
             cn = self.CN_list[k]
-            w = W_phys[N+k]
+            w = W_phys[k]
             cn.CN2UAV_W = w
             # 计算合理的数据量对应的能耗
             cost_curr_own = cost_list[k]
@@ -793,34 +767,78 @@ class Contract_Environment():
 
             else:
                 # 获取下一级的合同的类型
-                dn_list_ic = sort_dn_list[k+1]
-                fm_ic = fm_sort[k+1]*cn.max_freq
+                dn_list_ic = sort_dn_list[k + 1]
+                fm_ic = fm_sort[k + 1]
+                if fm_ic <= 1:
+                    fm_ic *= cn.max_freq
                 # 上一个节点的能耗
-                cost_worse = cost_self[k+1]
+                cost_worse = cost_self[k + 1]
                 # 当前节点获取上一个节点的合同的能耗
-                cost_curr_mimic,_ = cn.evaluate_contract(w,dn_list_ic,fm_ic)
+                cost_curr_mimic, _ = cn.evaluate_contract(w, dn_list_ic, fm_ic)
                 # 计算租金增量：(上个节点成本 - 当前节点选择成本) * 任务量
                 rent_increment = cost_worse - cost_curr_mimic
-                if rent_increment<0:
+                if rent_increment < 0:
                     test = rent_increment
                     # 假设上一个排序为[1,2,0]那么我们是无法生成满足对应IC的合同？
                     # 因为0这个节点的type本身比2要大，那么对应的cost*（1/type）就必然会比节点2要小
                     # 那么就会导致同样的合同，给0的cost比给2要小，导致rent_increment为负数？
                     # cost_curr_mimic, _ = cn.evaluate_contract(w, dn_list_ic, fm_ic)
-                    print("rent_increment :",test)
+                    print("rent_increment :", test)
 
                 # 当前好人的总效用 = 差人的效用 + 新增租金
                 Uti_CN[k] = Uti_CN[k + 1] + rent_increment
                 # 最终激励 = 物理成本 + 净效用(租金)
                 Rm[k] = cost_curr_own + Uti_CN[k]
+        return Rm
 
-        return {
-            'Dn': Dn_phys, 'Rn': Rn_desc,
-            'Rm': Rm, 'fm': fm_sort,
-            'cn2dn_list': sort_dn_list,
-            'bandwidth': W_phys,
-            'group': sort_group_idx
-        }
+    def calculate_dn_contract(self, Dn_phys, N, W_phys):
+        Rn_desc = np.zeros(N)
+        Uti_DN = np.zeros(N)  # 记录净效用
+        # 如果需要的话，应该如何分配？优先给算力更大的带宽？
+        # 从最差的节点 (Index N-1) 开始，倒着推到最好的节点 (Index 0)
+        for k in range(N - 1, -1, -1):
+            # 获取最后对应位置的数据节点
+            dn = self.DN_list[k]
+            w = W_phys[k]
+            dn.DN2UAV_W = w
+            # 当前合同的理论数据量
+            data_curr = Dn_phys[k]
+            # 计算合理的数据量对应的能耗
+            cost_curr_own = dn.evaluate_contract(w, data_curr, Flag=True)
+
+            # 先生成满足IC的合同
+            if k == N - 1:
+                # --- Base Case: 最差类型 (Type Worst) ---
+                # 约束：IR (个人理性) 紧致 -> 效用为 0
+                # R = Cost * Data
+                Uti_DN[k] = 0
+                Rn_desc[k] = cost_curr_own
+
+            else:
+                # 获取下一级的合同的类型
+                dn_ic = self.DN_list[k + 1]
+                dn_copy = copy.deepcopy(dn_ic)
+                dn_copy.unit_cost = dn.unit_cost
+
+                w_ic = W_phys[k + 1]
+                data_ic = Dn_phys[k + 1]
+
+                cost_worse = dn_ic.evaluate_contract(w_ic, data_ic)
+
+                # 当前节点获取下一个节点的合同的能耗
+                cost_curr_mimic = dn_copy.evaluate_contract(w_ic, data_ic)
+
+                # 计算租金增量：(差人成本 - 好人成本) * 差人任务量
+                rent_increment = cost_worse - cost_curr_mimic
+                if rent_increment < 0:
+                    print("DN is error!!!")
+
+                # 当前好人的总效用 = 差人的效用 + 新增租金
+                Uti_DN[k] = Uti_DN[k + 1] + rent_increment
+
+                # 最终激励 = 物理成本 + 净效用(租金)
+                Rn_desc[k] = cost_curr_own + Uti_DN[k]
+        return Rn_desc
 
     def weighted_greedy_routing(self,Dn_list, node_weights, num_cn):
         """
@@ -873,8 +891,11 @@ class Contract_Environment():
         # 这里计算的是相对大小不是精准的能耗
         for i in range(self.M_CN):
             dn_list = cn_to_dn_list[i]
-            fm = cn_fm[i]*self.CN_list[i].max_freq
-            w = W_phys[self.N_DN + i]
+            if cn_fm[i] <= 1:
+                fm = cn_fm[i]*self.CN_list[i].max_freq
+            else:
+                fm = cn_fm[i]
+            w = W_phys[i]
             total_E, H_alpha = self.CN_list[i].evaluate_contract(w, dn_list, fm, flag=True)
             cost_list.append(total_E.item())
         return cost_list
@@ -915,8 +936,8 @@ class Contract_Environment():
         if self.reward < 0:
             uav_info = self.uav.calculate_cost(uav_dn_list, uav_cn_list)
             print(f"self.reward is {self.reward}")
-
-        return self.state,float(self.reward),False,uav_info,dn_contract, cn_contract,uti_
+        total_data = sum(all_action['Dn'])
+        return self.state,float(self.reward),False,uav_info,dn_contract, cn_contract,uti_,total_data
 
     def check_ic_status(self, action_dict):
         """
@@ -983,11 +1004,12 @@ class Contract_Environment():
             fm.append(np.round((cn.max_freq*all_action['fm'][i]/1e9),2))
             H_alpha.append(np.round(cn.H_alpha,2))
         # print(all_action['routing'])
-
-        cn_contract = list(all_action['group']) + list(H_alpha) + list(fm)
+        # 改为这行 (将其递归地转化为原生 Python List)：
+        group_idx = [x.tolist() if isinstance(x, np.ndarray) else list(x) for x in all_action['group']]
+        cn_contract = group_idx + list(H_alpha) + list(fm) + list(all_action['Rm'])
         return dn_contract, cn_contract
 
-    def calculate_Utility(self,all_action,ic_list):
+    def calculate_Utility(self,all_action,ic_list,flag = False):
         uav_utility = 0
         Dn = all_action['Dn']
         Rn = all_action['Rn']
@@ -1000,12 +1022,13 @@ class Contract_Environment():
         for i,dn in enumerate(self.DN_list):
             dn.D_req = Dn[i]
             dn.R_offer = Rn[i]
-            uti = dn.evaluate_contract(dn.DN2UAV_W,dn.D_req,dn.R_offer)
+            w = W[i]
+            uti = dn.evaluate_contract(w,dn.D_req,dn.R_offer,flag)
             if uti < 0:
                 dn_uti += uti
                 dn_ir[i] = 0
             else:
-                dn_uti += self.tau_dn*self.uav.DN_uti(dn,all_action)
+                dn_uti += self.tau_dn*self.uav.DN_uti(dn)
                 dn_ir[i] = 1
                 # 如果符合ir则把他添加进来
                 uav_dn_list.append(dn)
@@ -1018,7 +1041,8 @@ class Contract_Environment():
         for i,cn in enumerate(self.CN_list):
             cn.DN_list = dn_list[i]
             cn.fm = fm[i]
-            uti = cn.evaluate_contract(cn.CN2UAV_W,cn.DN_list,cn.fm,flag=True,R_offer=Rm[i])
+            w = W[self.N_DN+i]
+            uti = cn.evaluate_contract(w,cn.DN_list,cn.fm,flag=False,R_offer=Rm[i])
             if uti < 0:
                 cn_uti += uti
                 cn_ir[i] = 0
@@ -1040,8 +1064,77 @@ class Contract_Environment():
         }
         return uti_all,dn_ir,cn_ir,uav_dn_list,uav_cn_list
 
+    def step2(self,contract):
+        # 普通合同走这个通道来计算效用
+        # 合同输入形式
+        """
+         return {
+            'Dn': Dn_phys,
+            'Rn': Rn_phys,
+            'Rm': Rm_total_final,
+            'fm': fm_final,
+            'bandwidth': W_alloc,
+            'routing': final_routing,
+            'beta_m': final_beta_m,
+            'mode': 'TCT_BASELINE'
+        }
+        """
+        # 1.根据合同计算时间
+        # for i,dn in enumerate(self.DN_list):
+        #     data_curr = contract['Dn'][i]
+        #     w = data_curr['bandwidth'][i]
+        #     cost_curr_own = dn.evaluate_contract(w, data_curr, Flag=True)
+            # total_E,total_time,H_alpha = dn.calculate_energy_by_contract(CN2UAV_W,DN_list,f_m,True)
+        N = self.N_DN
+        M = self.M_CN
+        W_n = contract['bandwidth'][:N]
+        W_m = contract['bandwidth'][N:]
+        cn2dn_list = self.get_dn_list(contract['routing'])
+        contract['cn2dn_list'] = cn2dn_list
+        contract['Rn'] = self.calculate_dn_contract(contract['Dn'],N,W_n)
+        for i,dn in enumerate(self.DN_list):
+            dn.D_req = contract['Dn'][i]
+        contract['Rm'] = self.calculate_cn_contract(M,W_m,contract['fm'],cn2dn_list)
 
+        dn_contract = list(list(contract['Dn']) + list(np.round(contract['Rn'], 2)))
+        fm = np.round(contract['fm']/1e9,2)
+        H_alpha = np.round(contract['beta_m']/1e3,2)
+        cn_contract = list(contract['routing']) + list(H_alpha) + list(fm) + list(contract['Rm'])
+        compliance_rate, violations, ic_list = self.check_ic_status(contract)
+        # print(f'compliance_rate is {compliance_rate}, and ic_list is {ic_list}' )
+        # ic_list = np.ones(self.M_CN)
+        uti_, dn_ir, cn_ir, uav_dn_list, uav_cn_list = self.calculate_Utility(contract, ic_list)
+        uav_info = self.uav.calculate_cost(uav_dn_list, uav_cn_list)
 
+        self.uav.utility = uti_['uav_uti'] - uav_info['total_cost']
+
+        self.state = np.hstack([self.dn_ir, self.cn_ir, self.DN2UAVSINR, self.CN2UAVSINR])
+        self.reward = self.uav.utility
+        if self.reward < 0:
+            uav_info = self.uav.calculate_cost(uav_dn_list, uav_cn_list)
+            print(f"self.reward is {self.reward}")
+        total_data = sum(contract['Dn'])
+        return self.state, float(self.reward), False, uav_info, dn_contract, cn_contract, uti_,total_data
+
+    def get_dn_list(self,routing):
+        cn2dn_list = []
+        for route_idx, route in enumerate(routing):
+            # ========== 核心兼容逻辑 ==========
+            # 步骤1：将numpy数值转为Python原生int，避免类型问题
+            if isinstance(route, np.integer):  # 匹配numpy.int32/int64等类型
+                route = int(route)
+            # 步骤2：统一转为可迭代的列表
+            if isinstance(route, (int, float)):  # 如果是单个数值
+                route_iter = [route]  # 转为单元素列表（可迭代）
+            else:  # 如果本身就是可迭代类型（列表/元组等）
+                route_iter = route
+
+            # ========== 原有业务逻辑 ==========
+            for _, dn in enumerate(self.DN_list):
+                if route_idx in route_iter:
+                    cn2dn_list.append([dn])
+
+        return cn2dn_list
 def energy_and_type():
     # 设定 5 个具体的算力节点 (焦耳)
     nodes_theta = np.array([37000, 50000, 55000, 46000, 60000])
@@ -1066,6 +1159,7 @@ def energy_and_type():
 """
 def func_preference( theta, k, sigma):
     return 1 / (1 + np.exp(-k * (theta / sigma)))
+
 
 if __name__ == '__main__':
     energy_and_type()

@@ -4,7 +4,7 @@ import os
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import datetime
 from plot_picture import plot_learning_curves
-
+from tradition_contract.sfl_contract2 import TraditionalContractBaseline
 # 导入自定义模块
 from UsualFunctions import LOG  # 假设这是您的日志工具
 from Contract_Env_2 import Contract_Environment
@@ -33,11 +33,11 @@ print(f"Using device: {device}")
 class SFLExecutionRunner:
     def __init__(self, config):
         self.cfg = config
-
+        self.SFL_CONTRACT = self.cfg.SFL_CONTRACT
         # 1.1 初始化环境
         # 环境会读取 config 中的 N_DN, M_CN 等参数
         self.env = Contract_Environment(self.cfg)
-
+        self.contract = TraditionalContractBaseline(self.cfg)
         # 1.2 初始化 PPO Agent
         # 注意: 传入分层学习率参数 (lr_actor_cont, lr_actor_disc)
         # 假设 Config 类中已经定义了这些参数，如果没有，请在 Config 中添加
@@ -66,15 +66,15 @@ class SFLExecutionRunner:
             )
 
         self.metrics = {
-            'Total_Reward': [],  # 这里的 Reward 已经是平滑过的了，但为了画图再存一份
+            'Total_Data': [],  # 这里的 Reward 已经是平滑过的了，但为了画图再存一份
             'Avg_Reward': [],   # 平均reward
+            'Avg_Latency': [],  # 系统时延
+            'SFL_Contract_Total_Data': [],  # 系统时延
+            # 'Data_Throughput': [],  # 总数据量
+            'SFL_Contract_Uti': [],  # 普通合同unit
+            'SFL_Contract_Time': [],  # 监控 LR 变化
             'Actor_Loss': [],  # 如果 PPO 返回 Loss
             'Critic_Loss': [],
-            'Avg_Latency': [],  # 系统时延
-            'Total_Latency': [],  # 系统时延
-            # 'Data_Throughput': [],  # 总数据量
-            'Acceptance_Rate': [],  # 合同接受率
-            'Learning_Rate': [],  # 监控 LR 变化
             'UAV_Cost': [],
         }
 
@@ -98,6 +98,7 @@ class SFLExecutionRunner:
             episode_reward = []
             episode_time = []
             episode_uav_cost = []
+            episode_total_data = []
             ep_reward = 0
             # 2. Episode 步进循环
             # SFL 通常是一轮决策，所以这里的 steps 可能就是 1，
@@ -110,7 +111,7 @@ class SFLExecutionRunner:
 
                 # 2.2 环境交互
                 # 环境内部会进行 IC/IR 检查、能耗计算、奖励计算
-                next_state, reward, done, uav_info,dn_contract,cn_contract,uti_ = self.env.step(proc_cont)
+                next_state, reward, done, uav_info,dn_contract,cn_contract,uti_,total_data = self.env.step(proc_cont)
 
                 W_all = np.round(proc_cont[self.env.N_DN + self.env.M_CN:-self.env.M_CN],3) * (self.env.TOTAL_BW/1e6)
 
@@ -131,6 +132,7 @@ class SFLExecutionRunner:
                 episode_reward.append(reward)
                 episode_time.append(uav_info['total_time'])  # 假设 ep_time 是本轮总耗时
                 episode_uav_cost.append(uav_info['total_cost'])
+                episode_total_data.append(total_data)
 
                 if reward > log_max_reward['max_reward']:
                     log_max_reward = {
@@ -171,17 +173,27 @@ class SFLExecutionRunner:
             avg_time = np.mean(episode_time)
             true_time = float(episode_time[-1])
             avg_uav_cost = np.mean(episode_uav_cost)
+            avg_total_data = np.mean(episode_total_data)
             avg_loss_actor = np.array(all_loss['loss_actor'])
             avg_loss_critic = np.array(all_loss['loss_critic'])
             # --- 2. 收集数据 ---
             # 这些数据通常是本轮 Episode 的统计值
-            self.metrics['Total_Reward'].append(ep_reward)
+            self.metrics['Total_Data'].append(avg_total_data)
             self.metrics['Avg_Reward'].append(avg_reward)
             self.metrics['Avg_Latency'].append(avg_time)
             self.metrics['Total_Latency'].append(true_time)
             self.metrics['Actor_Loss'].append(avg_loss_actor)
             self.metrics['Critic_Loss'].append(avg_loss_critic)
             self.metrics['UAV_Cost'].append(avg_uav_cost)
+
+            if self.SFL_CONTRACT:
+                result = self.contract.get_action(self.env)
+                # print(result)uav_info['total_time']
+                state_contract, contract_reward, done_contract, uav_info_contract, dn_cont, cn_cont, uti_contract,all_data = self.env.step2(result)
+                # print(reward, done, uav_info, dn_contract, cn_contract, uti_)
+                self.metrics['SFL_Contract_Uti'].append(contract_reward)
+                self.metrics['SFL_Contract_Time'].append(uav_info['total_time'])
+                self.metrics['SFL_Contract_Total_Data'].append(all_data)
 
             # 3.3 动态调整学习率 (基于滑动平均奖励)
             if i_episode >= 1000:
@@ -217,8 +229,8 @@ class SFLExecutionRunner:
                 self.agent.save(save_path)
                 Log(f"模型保存: {save_path}")
 
-            if i_episode % 1000 == 0:
-                print(f"---the cn is {self.env.uav.data}")
+            # if i_episode % 1000 == 0:
+            #     print(f"---the cn is {self.env.uav.data}")
 
 
 # ==========================================

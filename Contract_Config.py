@@ -8,8 +8,8 @@ class Config:
     def __init__(self):
         # --- 系统规模 ---
         self.N_DN = 5  # 数据节点数
-        self.M_CN = 3  # 算力节点数
-
+        self.M_CN = 5  # 算力节点数
+        self.SFL_CONTRACT = True
         self.mode = 'SFL' # mode = SFL or FL
         self.UNIT_FULL_FLOPS = 1089
         self.MODEL_SIZE_MBITS = 288
@@ -17,15 +17,15 @@ class Config:
         # --- 物理约束 (映射常数) ---
         self.max_data_size = 120 #MB 数据的总大小为120MB
         self.max_data_count = 10000
-        self.MB_unit_ = 8*10e6 #1 MB=8×10^6 bits
+        self.MB_unit_ = 8e6 #1 MB=8e^6 bits
         self.f_n = np.array([1, 1.25]) * 1e9  # GHz (fm) 1GHz = 1e9Hz
         self.kappa = 16 #1bts数据所需要的运行次数
         self.T = 1
-        self.mu_dn = np.array([1, 2]) * 1e-28 #硬件系数
+        self.mu_dn = 1e-28 #硬件系数
         self.TOTAL_BW = 2*1e8  # 200MHz (Bandwidth),2*10e8
-
-        self.DN2CN_W = 1e7 #1MHz = 10^6Hz
-        self.CN2DN_W = 1e7 #2MHz
+        self.max_freq = 10e9
+        self.DN2CN_W = 1.5e7 #1MHz = 10^6Hz
+        self.CN2DN_W = 1.5e7 #2MHz
 
         #数据节点的通信功率:单位W（watt）
         self.DN_P_1 = 0.2
@@ -49,7 +49,7 @@ class Config:
         # --- 无人机 ---
         self.beta_1 = 400
         self.beta_2 = 1
-        self.alpha_dn = 400
+        self.alpha_dn = 800
         self.alpha_dn_fl = 100
         self.f_p = 1.5*1e9 #无人机的CPU
         self.E_h = 0.5
