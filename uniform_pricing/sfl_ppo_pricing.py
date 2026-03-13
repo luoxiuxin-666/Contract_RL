@@ -146,6 +146,11 @@ class UniformPricingPPO:
 
         return proc_action.cpu().numpy().flatten()
 
+    def get_lr(self):
+        """返回当前 Actor 的学习率，用于日志打印"""
+        # index 1 是 actor_mean
+        return self.optimizer.param_groups[1]['lr']
+
     def update(self):
         old_states = torch.squeeze(torch.stack(self.buffer.states, dim=0)).detach().to(device)
         old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)

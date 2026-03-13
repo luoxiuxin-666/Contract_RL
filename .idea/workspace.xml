@@ -4,10 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="68e53569-d535-498d-aac3-eba75ad09c8b" name="更改" comment="第二次提交">
+    <list default="true" id="68e53569-d535-498d-aac3-eba75ad09c8b" name="更改" comment="第三次提交">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Contract_Config.py" beforeDir="false" afterPath="$PROJECT_DIR$/Contract_Config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Contract_Env_2.py" beforeDir="false" afterPath="$PROJECT_DIR$/Contract_Env_2.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/checkpoints/ep_1000.pth" beforeDir="false" afterPath="$PROJECT_DIR$/checkpoints/ep_1000.pth" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/checkpoints/ep_1500.pth" beforeDir="false" afterPath="$PROJECT_DIR$/checkpoints/ep_1500.pth" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/checkpoints/ep_2000.pth" beforeDir="false" afterPath="$PROJECT_DIR$/checkpoints/ep_2000.pth" afterDir="false" />
@@ -15,9 +13,8 @@
       <change beforePath="$PROJECT_DIR$/checkpoints/ep_3000.pth" beforeDir="false" afterPath="$PROJECT_DIR$/checkpoints/ep_3000.pth" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/checkpoints/ep_500.pth" beforeDir="false" afterPath="$PROJECT_DIR$/checkpoints/ep_500.pth" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main_2.py" beforeDir="false" afterPath="$PROJECT_DIR$/main_2.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/plot_picture.py" beforeDir="false" afterPath="$PROJECT_DIR$/plot_picture.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/results/SFL_PPO_Contract/plots/training_curves.png" beforeDir="false" afterPath="$PROJECT_DIR$/results/SFL_PPO_Contract/plots/training_curves.png" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tradition_contract/SFL_Contract.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/uniform_pricing/sfl_ppo_pricing.py" beforeDir="false" afterPath="$PROJECT_DIR$/uniform_pricing/sfl_ppo_pricing.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -256,7 +253,7 @@
       <workItem from="1773021037871" duration="7721000" />
       <workItem from="1773038036797" duration="563000" />
       <workItem from="1773038628473" duration="53342000" />
-      <workItem from="1773365933882" duration="16306000" />
+      <workItem from="1773365933882" duration="17896000" />
     </task>
     <task id="LOCAL-00001" summary="第二次提交">
       <option name="closed" value="true" />
@@ -266,7 +263,15 @@
       <option name="project" value="LOCAL" />
       <updated>1773042283259</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="第三次提交">
+      <option name="closed" value="true" />
+      <created>1773392055332</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1773392055332</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -274,7 +279,8 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="第二次提交" />
-    <option name="LAST_COMMIT_MESSAGE" value="第二次提交" />
+    <MESSAGE value="第三次提交" />
+    <option name="LAST_COMMIT_MESSAGE" value="第三次提交" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>

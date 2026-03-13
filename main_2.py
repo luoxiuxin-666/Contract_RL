@@ -57,6 +57,17 @@ class SFLExecutionRunner:
                 K_epochs=config.K_EPOCHS,
                 eps_clip=config.EPS_CLIP)
 
+            if self.cfg.USE_LR_SCHEDULER:
+                self.scheduler_pricing = ReduceLROnPlateau(
+                    self.uniform_ppo.optimizer,  # 监控它的优化器
+                    mode='max',  # 目标是 Reward 最大化
+                    factor=self.cfg.LR_FACTOR,
+                    patience=self.cfg.LR_PATIENCE,
+                    threshold=self.cfg.LR_THRESHOLD,
+                    min_lr=self.cfg.LR_MIN,
+                    verbose=True
+                )
+
         self.contract = TraditionalContractBaseline(self.cfg)
         # 1.2 初始化 PPO Agent
         # 注意: 传入分层学习率参数 (lr_actor_cont, lr_actor_disc)
@@ -224,9 +235,13 @@ class SFLExecutionRunner:
                 self.metrics['Pricing_Latency'].append(np.mean(episode_time))
 
             # 3.3 动态调整学习率 (基于滑动平均奖励)
-            if i_episode >= 1000:
+            if i_episode >= 500:
                 if self.cfg.USE_LR_SCHEDULER:
                     self.scheduler.step(avg_reward)
+
+                    if self.PPO_PRICING:
+                        self.scheduler_pricing.step(np.mean(episode_reward))
+
 
             # 3.4 日志打印
             if i_episode % self.cfg.LOG_INTERVAL == 0:
