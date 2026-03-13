@@ -36,6 +36,7 @@ def plot_learning_curves(metrics_dict, current_episode, window_size=20):
     1. 自适应子图布局
     2. 双线绘制 (Raw + Smooth)
     3. 自动 X 轴推断
+    4. 自动处理不等长嵌套数据（使用末尾元素补齐）
     """
     if not metrics_dict:
         return
@@ -59,28 +60,56 @@ def plot_learning_curves(metrics_dict, current_episode, window_size=20):
     else:
         axes = axes.flatten()
 
-    # 2. 遍历绘制每个指标
     keys = list(metrics_dict.keys())
 
-    # 计算 X 轴刻度
-    # 假设所有指标的记录频率是一样的，取第一个非空列表计算步长
-    any_key = keys[0]
-    data_len = len(metrics_dict[any_key])
-    if data_len == 0: return
-
-    # 计算记录间隔 (Log Interval)
-    step_interval = current_episode / data_len
-    x_axis = np.arange(1, data_len + 1) * step_interval
-
+    # 2. 遍历绘制每个指标
     for i, key in enumerate(keys):
         ax = axes[i]
-        raw_data = np.array(metrics_dict[key]).flatten()
+        data_list = metrics_dict[key]
 
-        # 检查是否为空或含 NaN
-        if len(raw_data) == 0:continue
+        if not data_list:
+            continue
+
+        # ==================== 核心修改区域 ====================
+        # 步骤 1：寻找当前指标数据中最长的子序列长度
+        lengths = [len(item) if isinstance(item, (list, tuple, np.ndarray)) else 1 for item in data_list]
+        if not lengths:
+            continue
+        max_len = max(lengths)
+
+        # 步骤 2：使用最后一个元素对齐补全短数据
+        padded_data = []
+        for item in data_list:
+            if not isinstance(item, (list, tuple, np.ndarray)):
+                item_list = [item]  # 将单个数字包装成列表
+            else:
+                item_list = list(item)
+
+            # 如果遇到空列表，用 NaN 填满；否则用原列表最后一个元素补齐至 max_len
+            if len(item_list) == 0:
+                item_list = [np.nan] * max_len
+            elif len(item_list) < max_len:
+                last_element = item_list[-1]
+                padding_length = max_len - len(item_list)
+                item_list.extend([last_element] * padding_length)
+
+            padded_data.append(item_list)
+
+        # 步骤 3：转换为规范的 float 数组并展平
+        raw_data = np.array(padded_data, dtype=np.float64).flatten()
+        # ====================================================
+
+        # 检查是否为空
+        if len(raw_data) == 0:
+            continue
+
+        # 安全处理 NaN
         if np.isnan(raw_data).any():
-            # 可选：填充 NaN
             raw_data = np.nan_to_num(raw_data)
+
+        # 动态计算当前指标的 X 轴 (解决展平后数据长度变化的问题)
+        # 将展平后的总步数均匀映射到当前的 Episode 进度上
+        x_axis = np.linspace(0, current_episode, len(raw_data))
 
         # A. 绘制原始数据 (浅色，透明度高)
         ax.plot(x_axis, raw_data, alpha=0.3, color='gray', label='Raw')
@@ -113,12 +142,6 @@ def plot_learning_curves(metrics_dict, current_episode, window_size=20):
 
     save_path = os.path.join(RESULT_DIR, 'training_curves.png')
     plt.savefig(save_path, dpi=100)
-
-    # 额外保存一份带时间戳的，防止覆盖后想找回历史
-    # import time
-    # ts_path = os.path.join(RESULT_DIR, f'history/curves_{int(time.time())}.png')
-    # os.makedirs(os.path.dirname(ts_path), exist_ok=True)
-    # plt.savefig(ts_path, dpi=100)
 
     plt.close(fig)  # 极其重要：关闭图像释放内存
     print(f"[Plotter] Curves updated at {save_path}")

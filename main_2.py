@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import numpy as np
 import torch
 import os
@@ -5,6 +7,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import datetime
 from plot_picture import plot_learning_curves
 from tradition_contract.sfl_contract2 import TraditionalContractBaseline
+from uniform_pricing.sfl_ppo_pricing import pricing_run_training, UniformPricingPPO
 # 导入自定义模块
 from UsualFunctions import LOG  # 假设这是您的日志工具
 from Contract_Env_2 import Contract_Environment
@@ -18,9 +21,9 @@ log = LOG()
 log.LogInitialize()
 
 
-def Log(message,Flag=True):
+def Log(message, Flag=True):
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log.LogRecord(f"{message} - 时间：{current_time}",Flag)
+    log.LogRecord(f"{message} - 时间：{current_time}", Flag)
 
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -34,9 +37,26 @@ class SFLExecutionRunner:
     def __init__(self, config):
         self.cfg = config
         self.SFL_CONTRACT = self.cfg.SFL_CONTRACT
+        self.PPO_PRICING = self.cfg.PPO_PRICING
         # 1.1 初始化环境
         # 环境会读取 config 中的 N_DN, M_CN 等参数
         self.env = Contract_Environment(self.cfg)
+
+        # 是否开启其他对照实验
+        if self.cfg.SFL_CONTRACT:
+            self.env_sfl_contract = deepcopy(self.env)
+        if self.cfg.PPO_PRICING:
+            # state_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, gae_lambda=0.95
+            self.env_ppo_pricing = deepcopy(self.env)
+            pricing_state_dim = self.env_ppo_pricing.state_dim
+            self.uniform_ppo = UniformPricingPPO(
+                state_dim=pricing_state_dim,
+                lr_actor=config.LR_ACTOR,  # 连续动作学习率 (大)
+                lr_critic=config.LR_CRITIC,
+                gamma=config.GAMMA,
+                K_epochs=config.K_EPOCHS,
+                eps_clip=config.EPS_CLIP)
+
         self.contract = TraditionalContractBaseline(self.cfg)
         # 1.2 初始化 PPO Agent
         # 注意: 传入分层学习率参数 (lr_actor_cont, lr_actor_disc)
@@ -67,15 +87,14 @@ class SFLExecutionRunner:
 
         self.metrics = {
             'Total_Data': [],  # 这里的 Reward 已经是平滑过的了，但为了画图再存一份
-            'Avg_Reward': [],   # 平均reward
+            'Avg_Reward': [],  # 平均reward
             'Avg_Latency': [],  # 系统时延
             'SFL_Contract_Total_Data': [],  # 系统时延
-            # 'Data_Throughput': [],  # 总数据量
             'SFL_Contract_Uti': [],  # 普通合同unit
             'SFL_Contract_Time': [],  # 监控 LR 变化
-            'Actor_Loss': [],  # 如果 PPO 返回 Loss
-            'Critic_Loss': [],
-            'UAV_Cost': [],
+            'Pricing_Total_Data': [],  # 如果 PPO 返回 Loss
+            'Pricing_Uti': [],
+            'Pricing_Latency': []
         }
 
     def run_training(self):
@@ -84,8 +103,8 @@ class SFLExecutionRunner:
         log_max_reward = {
             'max_reward': 0.0,
             'i_episode': 0,
-            'dn_contract' : [],
-            'cn_contract' : [],
+            'dn_contract': [],
+            'cn_contract': [],
             'total_time': 0.0,
             'cn_uti': 0.0,
             'dn_uti': 0.0,
@@ -111,9 +130,10 @@ class SFLExecutionRunner:
 
                 # 2.2 环境交互
                 # 环境内部会进行 IC/IR 检查、能耗计算、奖励计算
-                next_state, reward, done, uav_info,dn_contract,cn_contract,uti_,total_data = self.env.step(proc_cont)
+                next_state, reward, done, uav_info, dn_contract, cn_contract, uti_, total_data = self.env.step(
+                    proc_cont)
 
-                W_all = np.round(proc_cont[self.env.N_DN + self.env.M_CN:-self.env.M_CN],3) * (self.env.TOTAL_BW/1e6)
+                W_all = np.round(proc_cont[self.env.N_DN + self.env.M_CN:-self.env.M_CN], 3) * (self.env.TOTAL_BW / 1e6)
 
                 # 2.3 判断终止条件 (Termination vs Truncation)
                 # A. 任务失败/完成 (Done)
@@ -125,7 +145,6 @@ class SFLExecutionRunner:
                 # 存入的是 is_terminal，PPO update 时会据此截断 GAE
                 self.agent.buffer.rewards.append(reward)
                 self.agent.buffer.is_terminals.append(is_terminal)
-
 
                 state = next_state
                 ep_reward += reward
@@ -181,19 +200,28 @@ class SFLExecutionRunner:
             self.metrics['Total_Data'].append(avg_total_data)
             self.metrics['Avg_Reward'].append(avg_reward)
             self.metrics['Avg_Latency'].append(avg_time)
-            self.metrics['Total_Latency'].append(true_time)
-            self.metrics['Actor_Loss'].append(avg_loss_actor)
-            self.metrics['Critic_Loss'].append(avg_loss_critic)
-            self.metrics['UAV_Cost'].append(avg_uav_cost)
+            # self.metrics['Actor_Loss'].append(avg_loss_actor)
+            # self.metrics['Critic_Loss'].append(avg_loss_critic)
+            # self.metrics['UAV_Cost'].append(avg_uav_cost)
 
             if self.SFL_CONTRACT:
-                result = self.contract.get_action(self.env)
-                # print(result)uav_info['total_time']
-                state_contract, contract_reward, done_contract, uav_info_contract, dn_cont, cn_cont, uti_contract,all_data = self.env.step2(result)
-                # print(reward, done, uav_info, dn_contract, cn_contract, uti_)
+                self.env_sfl_contract.reset()
+                contract_action = self.contract.get_action(self.env_sfl_contract)
+                state_contract, contract_reward, done_contract, uav_info_contract, dn_cont, cn_cont, uti_contract, all_data = self.env_sfl_contract.step2(
+                    contract_action)
                 self.metrics['SFL_Contract_Uti'].append(contract_reward)
                 self.metrics['SFL_Contract_Time'].append(uav_info['total_time'])
                 self.metrics['SFL_Contract_Total_Data'].append(all_data)
+
+            if self.PPO_PRICING:
+                self.env_ppo_pricing.reset()
+                # env,ppo,ppo_state
+                pricing_state = self.env_ppo_pricing.state
+                episode_reward, episode_time, episode_total_data = pricing_run_training(self.env_ppo_pricing,self.uniform_ppo,pricing_state)
+                all_loss = self.uniform_ppo.update()
+                self.metrics['Pricing_Total_Data'].append(np.mean(episode_total_data))
+                self.metrics['Pricing_Uti'].append(np.mean(episode_reward))
+                self.metrics['Pricing_Latency'].append(np.mean(episode_time))
 
             # 3.3 动态调整学习率 (基于滑动平均奖励)
             if i_episode >= 1000:
@@ -207,11 +235,11 @@ class SFLExecutionRunner:
                 log_msg = f"Ep {i_episode} | Reward: {avg_reward:.2f} |  LR_Cont: {lrs.get('lr', 0):.2e}|true_time: {true_time:.2f}|avg_time: {avg_time:.2f}|avg_cost: {avg_uav_cost:.2f}"
                 Log(log_msg)
                 log_msg = f"uav_uti: {uti_['uav_uti']:.2f}|dn_uti: {uti_['dn_uti']:.2f}|cn_uti: {uti_['cn_uti']:.2f}"
-                Log(log_msg,False)
+                Log(log_msg, False)
                 msg = f"dn_contract {dn_contract} | cn_contract {cn_contract}"
-                Log(msg,False)
+                Log(msg, False)
                 msg = f" W_all is {W_all}"
-                Log(msg,False)
+                Log(msg, False)
                 # if compliance_rate!=1:
                 #     Log(f"============== compliance_rate is 1 =================",False)
 

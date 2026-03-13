@@ -10,6 +10,7 @@ class Config:
         self.N_DN = 5  # 数据节点数
         self.M_CN = 5  # 算力节点数
         self.SFL_CONTRACT = True
+        self.PPO_PRICING = True
         self.mode = 'SFL' # mode = SFL or FL
         self.UNIT_FULL_FLOPS = 1089
         self.MODEL_SIZE_MBITS = 288
@@ -47,9 +48,9 @@ class Config:
         # CPU设置为5-10GHz
 
         # --- 无人机 ---
-        self.beta_1 = 400
+        self.beta_1 = 600
         self.beta_2 = 1
-        self.alpha_dn = 800
+        self.alpha_dn = 300
         self.alpha_dn_fl = 100
         self.f_p = 1.5*1e9 #无人机的CPU
         self.E_h = 0.5
