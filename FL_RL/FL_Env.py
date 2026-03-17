@@ -12,7 +12,7 @@ class DataNode:
 
         # 物理硬件
         self.f_n = np.random.uniform(config_DN.f_n[0], config_DN.f_n[1])  # 本地计算频率
-        self.mu_n = np.random.uniform(config_DN.mu_dn[0], config_DN.mu_dn[1])
+        self.mu_n = config_DN.mu_dn
         self.kappa = config_DN.kappa
 
         # 通信参数
@@ -76,7 +76,7 @@ class DataNode:
 
         return total_energy, total_time
 
-    def evaluate_contract(self, D_req, R_offer, bandwidth):
+    def evaluate_contract(self, D_req, R_offer, bandwidth,flag = False):
         """
         IR 检查
         """
@@ -84,7 +84,7 @@ class DataNode:
         if D_req > self.max_data_count:
             return -1e9
 
-        real_cost, _ = self.calculate_real_cost(D_req, bandwidth)
+        real_cost, _ = self.calculate_real_cost(D_req, bandwidth,flag)
 
         # 归一化成本 (为了数值稳定)
         # scaled_cost = real_cost * 1e-4
@@ -111,21 +111,20 @@ class FL_UAV:
         self.E_h = config.E_h
         self.total_cost = 0.0
         self.utility = 0.0
-        self.alpha_dn = config.alpha_dn_fl
         self.T = config.T
 
         self.max_time = 0.0
 
-    def calculate_utility(self, dn_list):
+    def calculate_utility(self, dn_list, alpha):
         total_payment = 0
         max_time = 0
         uti = 0.0
         for dn in dn_list:
             if dn.utility >= 0:  # 只有接受的节点才算
-                Dn = dn.D_req   # 缩小一下区间
+                Dn = dn.D_req / 550   # 缩小一下区间
                 gain = np.log(1 + Dn)
-                pay = dn.R_offer / 500
-                uti += (1 / self.N_DN) * self.alpha_dn * (gain - pay)
+                pay = dn.R_offer / 700
+                uti += (1 / self.N_DN) * alpha * (gain - pay)
                 max_time = max(max_time, dn.total_time)
 
         # 成本: 支付 + 时延惩罚
@@ -152,6 +151,8 @@ class FLEnvironment:
 
         # 状态维度: [IR_State(N), SINR(N)]
         self.state_dim = self.N_DN * 2
+        self.alpha_ppo = config.alpha_fl_ppo
+        self.alpha_contract = config.alpha_fl_contract
 
         self.TOTAL_BW = config.TOTAL_BW
 
@@ -197,7 +198,7 @@ class FLEnvironment:
 
     def reset(self):
         # 1. 随机生成信道
-        self.init_all_SINR(True)
+        self.init_all_SINR(False)
 
         # 2. 分配信道给节点 (按 ID 顺序，或者按排序后的顺序)
         # 这里假设 sinr 是随机分布在区域内的，直接按列表顺序赋值即可
@@ -205,9 +206,25 @@ class FLEnvironment:
             dn.SINR = self.sinr_list[i]
             dn.reset()
 
+
         self.dn_ir = np.random.randint(0, 2, self.N_DN)
 
         return np.concatenate([self.dn_ir, self.sinr_list])
+
+    def reset2(self):
+        self.reset()
+        # 加一个随机能耗扰动
+        # 基准值
+        base = self.DN_list[0].unit_cost
+
+        # 波动范围（比如 10%）
+        delta = base * 0.05
+
+        # 最终结果：base ± delta 之间随机
+        result = np.random.uniform(-delta, delta)
+
+        for dn in self.DN_list:
+            dn.unit_cost += result
 
     def decode_action(self, proc_cont):
         """
@@ -223,17 +240,27 @@ class FLEnvironment:
         bw_ratios = proc_cont[N:]
         W_phys = bw_ratios * self.cfg.TOTAL_BW
 
+        Rn_phys = self.get_Rn_by_Dn(Dn_phys, N, W_phys)
 
+        # 此时 Dn_phys 和 Rn_phys 都是按 [Worst -> Best] 排序的
+        # 刚好对应 self.DN_list 的顺序
+
+        return {
+            'Dn': Dn_phys,
+            'Rn': Rn_phys,
+            'bandwidth': W_phys
+        }
+
+    def get_Rn_by_Dn(self, Dn_phys, N, W_phys):
         Rn_phys = np.zeros(N)
         Uti_Dn = np.zeros(N)
         u_acc = 0
-
-        for k in range(N-1, -1, -1):
+        for k in range(N - 1, -1, -1):
             dn = self.DN_list[k]
             w = W_phys[k]
 
             # 根据当前合同的数据量去计算对应的能耗
-            cost,_ = dn.calculate_real_cost(Dn_phys[k],w,flag=True)
+            cost, _ = dn.calculate_real_cost(Dn_phys[k], w, flag=True)
             if k == N - 1:
                 Uti_Dn[k] = 0
                 Rn_phys[k] = cost
@@ -249,9 +276,9 @@ class FLEnvironment:
                 w_ic = W_phys[k + 1]
                 data_ic = Dn_phys[k + 1]
 
-                cost_worse,_ = dn_ic.calculate_real_cost(data_ic,w_ic)
+                cost_worse, _ = dn_ic.calculate_real_cost(data_ic, w_ic)
                 # 当前节点获取下一个节点的合同的能耗
-                cost_curr_mimic,_ = dn_copy.calculate_real_cost(data_ic,w_ic)
+                cost_curr_mimic, _ = dn_copy.calculate_real_cost(data_ic, w_ic)
 
                 rent = cost_worse - cost_curr_mimic
                 if rent < 0:
@@ -262,15 +289,7 @@ class FLEnvironment:
 
                 # 最终激励 = 物理成本 + 净效用(租金)
                 Rn_phys[k] = cost + Uti_Dn[k]
-
-        # 此时 Dn_phys 和 Rn_phys 都是按 [Worst -> Best] 排序的
-        # 刚好对应 self.DN_list 的顺序
-
-        return {
-            'Dn': Dn_phys,
-            'Rn': Rn_phys,
-            'bandwidth': W_phys
-        }
+        return Rn_phys
 
     def step(self, proc_cont):
         # 1. 生成合同
@@ -297,11 +316,93 @@ class FLEnvironment:
                 self.dn_ir[i] = 0
 
         # 3. 计算系统奖励
-        reward = self.uav.calculate_utility(self.DN_list)
+        reward = self.uav.calculate_utility(self.DN_list,self.alpha_ppo)
 
         # 状态更新
         next_state = np.concatenate([self.dn_ir, self.sinr_list])
 
         contract = np.concatenate([Dn, Rn])
 
-        return next_state, reward, False,contract, {}
+        total_data = sum(Dn)
+
+        return next_state, reward, False,contract, total_data
+
+    def step2(self,contract):
+        Dn = contract['Dn']
+        W = contract['bandwidth']
+
+        Rn = self.get_Rn_by_Dn(Dn,self.N_DN, W)
+        contract['Rn'] = Rn
+
+        for i, dn in enumerate(self.DN_list):
+            dn.D_req = Dn[i]
+            dn.R_offer = Rn[i]
+
+        # 2. 节点决策
+        for i, dn in enumerate(self.DN_list):
+            # 将生成的带宽分配给节点 (这里可能需要重新匹配顺序，为了简单直接按排序后的索引给)
+            # 假设 W 也是 PPO 输出的对应排序后的权重
+            dn.bandwidth = W[i]
+
+            uti = dn.evaluate_contract(Dn[i], Rn[i], W[i])
+
+            if uti >= 0:
+                self.dn_ir[i] = 1
+            else:
+                self.dn_ir[i] = 0
+
+        # 3. 计算系统奖励
+        reward = self.uav.calculate_utility(self.DN_list,self.alpha_contract)
+
+        # 状态更新
+        next_state = np.concatenate([self.dn_ir, self.sinr_list])
+
+        contract = np.concatenate([Dn, Rn])
+
+        total_data = sum(Dn)
+
+        return next_state, reward, False, contract, total_data
+
+    def step3(self,action):
+        '''
+        return {
+        'Dn': Dn_phys,
+        'Rn': Rn_phys,
+        'bandwidth': W_alloc,
+        'mode': 'FL_PRICING_BASELINE'  # 让环境 step 知道此时是 FL 模式，计算效用不要带 CN
+        }
+        '''
+
+        Dn = action['Dn']
+        Rn = action['Rn']
+        W = action['bandwidth']
+
+        for i, dn in enumerate(self.DN_list):
+            dn.D_req = Dn[i]
+            dn.R_offer = Rn[i]
+
+        # 2. 节点决策
+        for i, dn in enumerate(self.DN_list):
+            # 将生成的带宽分配给节点 (这里可能需要重新匹配顺序，为了简单直接按排序后的索引给)
+            # 假设 W 也是 PPO 输出的对应排序后的权重
+            dn.bandwidth = W[i]
+
+            uti = dn.evaluate_contract(Dn[i], Rn[i], W[i],flag = True)
+
+            if uti >= 0:
+                self.dn_ir[i] = 1
+            else:
+                self.dn_ir[i] = 0
+
+        # 3. 计算系统奖励
+        reward = self.uav.calculate_utility(self.DN_list, self.alpha_ppo)
+
+        # 状态更新
+        next_state = np.concatenate([self.dn_ir, self.sinr_list])
+
+        contract = np.concatenate([Dn, Rn])
+
+        total_data = sum(Dn)
+
+        return next_state, reward, False, contract, total_data
+

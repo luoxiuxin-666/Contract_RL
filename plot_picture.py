@@ -70,6 +70,16 @@ def plot_learning_curves(metrics_dict, current_episode, window_size=20):
         if not data_list:
             continue
 
+        # 【核心修正】: 强制安全地转换为 numpy array
+        try:
+            # 1. 先尝试将列表中的元素都取 .item()（如果是 tensor 或 numpy 标量）
+            clean_list = [x.item() if hasattr(x, 'item') else float(x) for x in metrics_dict[key]]
+            # 2. 转换为 numpy array
+            raw_data = np.array(clean_list, dtype=np.float32)
+        except Exception as e:
+            print(f"[Plot Error] Could not process metric '{key}'. Data format is invalid. Error: {e}")
+            continue  # 跳过这个画不出来的图
+
         # ==================== 核心修改区域 ====================
         # 步骤 1：寻找当前指标数据中最长的子序列长度
         lengths = [len(item) if isinstance(item, (list, tuple, np.ndarray)) else 1 for item in data_list]

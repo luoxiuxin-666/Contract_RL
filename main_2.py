@@ -37,7 +37,7 @@ class SFLExecutionRunner:
     def __init__(self, config):
         self.cfg = config
         self.SFL_CONTRACT = self.cfg.SFL_CONTRACT
-        self.PPO_PRICING = self.cfg.PPO_PRICING
+        self.SFL_PRICING = self.cfg.SFL_PRICING
         # 1.1 初始化环境
         # 环境会读取 config 中的 N_DN, M_CN 等参数
         self.env = Contract_Environment(self.cfg)
@@ -45,10 +45,10 @@ class SFLExecutionRunner:
         # 是否开启其他对照实验
         if self.cfg.SFL_CONTRACT:
             self.env_sfl_contract = deepcopy(self.env)
-        if self.cfg.PPO_PRICING:
+        if self.cfg.SFL_PRICING:
             # state_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, gae_lambda=0.95
-            self.env_ppo_pricing = deepcopy(self.env)
-            pricing_state_dim = self.env_ppo_pricing.state_dim
+            self.env_SFL_PRICING = deepcopy(self.env)
+            pricing_state_dim = self.env_SFL_PRICING.state_dim
             self.uniform_ppo = UniformPricingPPO(
                 state_dim=pricing_state_dim,
                 lr_actor=config.LR_ACTOR,  # 连续动作学习率 (大)
@@ -224,11 +224,11 @@ class SFLExecutionRunner:
                 self.metrics['SFL_Contract_Time'].append(uav_info['total_time'])
                 self.metrics['SFL_Contract_Total_Data'].append(all_data)
 
-            if self.PPO_PRICING:
-                self.env_ppo_pricing.reset()
+            if self.SFL_PRICING:
+                self.env_SFL_PRICING.reset()
                 # env,ppo,ppo_state
-                pricing_state = self.env_ppo_pricing.state
-                episode_reward, episode_time, episode_total_data = pricing_run_training(self.env_ppo_pricing,self.uniform_ppo,pricing_state)
+                pricing_state = self.env_SFL_PRICING.state
+                episode_reward, episode_time, episode_total_data = pricing_run_training(self.env_SFL_PRICING,self.uniform_ppo,pricing_state)
                 all_loss = self.uniform_ppo.update()
                 self.metrics['Pricing_Total_Data'].append(np.mean(episode_total_data))
                 self.metrics['Pricing_Uti'].append(np.mean(episode_reward))
@@ -239,7 +239,7 @@ class SFLExecutionRunner:
                 if self.cfg.USE_LR_SCHEDULER:
                     self.scheduler.step(avg_reward)
 
-                    if self.PPO_PRICING:
+                    if self.SFL_PRICING:
                         self.scheduler_pricing.step(np.mean(episode_reward))
 
 

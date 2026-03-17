@@ -20,7 +20,8 @@ class TraditionalContractBaseline:
         self.prob_cn = np.ones(self.M_CN) / self.M_CN
 
         # 假设模型精度收益系数 (需与环境 Reward 计算对齐)
-        self.BETA_1 = 400.0  # 收益系数
+        # self.BETA_1 = self.cfg.alpha_dn  # 收益系数
+        self.BETA_1 = 450  # 收益系数
         self.ETA = 1.0  # 时延惩罚权重
         self.MU_COEFF = 1e-28  # 能耗常数
         self.E_COMM_UNIT = 0.01  # 单位传输常数
@@ -265,6 +266,7 @@ if __name__ == '__main__':
     env = Contract_Environment(config)
     test = TraditionalContractBaseline(config)
     result = test.get_action(env)
-    print(result)
-    state, reward, done, uav_info, dn_contract, cn_contract, uti_ = env.step2(result)
-    print( reward, done, uav_info, dn_contract, cn_contract, uti_)
+    print(result['Dn'])
+    state, reward, done, uav_info, dn_contract, cn_contract, uti_, total_data = env.step2(result)
+    # print( reward, done, uav_info, dn_contract, cn_contract, uti_)
+    print("total_data", total_data)

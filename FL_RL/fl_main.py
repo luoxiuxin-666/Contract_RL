@@ -1,10 +1,13 @@
+import copy
+
 import numpy as np
 import torch
 import os
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import datetime
 from plot_picture import plot_learning_curves
-
+from tradition_contract.fl_contract import FL_TraditionalContractBaseline
+from uniform_pricing.fl_ppo_pricing import PPO_FL_UniformPricing,pricing_run_training
 # 导入自定义模块
 from UsualFunctions import LOG  # 假设这是您的日志工具
 from FL_Env import FLEnvironment
@@ -38,6 +41,22 @@ class FLExecutionRunner:
         # 环境会读取 config 中的 N_DN, M_CN 等参数
         self.env = FLEnvironment(self.cfg)
 
+        if self.cfg.FL_CONTRACT:
+            self.fl_contract_env = copy.deepcopy(self.env)
+
+        if self.cfg.FL_PRICING:
+            self.fl_pricing_env = copy.deepcopy(self.env)
+            # state_dim, n_dn, lr_actor, lr_critic, gamma, K_epochs, eps_clip, gae_lambda=0.95
+            self.agent_pricing = PPO_FL_UniformPricing(
+            state_dim=self.env.state_dim,
+            n_dn=config.N_DN,
+            lr_actor=config.LR_ACTOR,  # 连续动作学习率 (大)
+            lr_critic=config.LR_CRITIC,
+            gamma=config.GAMMA,
+            K_epochs=config.K_EPOCHS,
+            eps_clip=config.EPS_CLIP
+            )
+
         # 1.2 初始化 PPO Agent
         # 注意: 传入分层学习率参数 (lr_actor_cont, lr_actor_disc)
         # 假设 Config 类中已经定义了这些参数，如果没有，请在 Config 中添加
@@ -64,18 +83,27 @@ class FLExecutionRunner:
                 threshold=self.cfg.LR_THRESHOLD,
                 min_lr=self.cfg.LR_MIN
             )
+            if self.cfg.FL_PRICING:
+                self.scheduler_pricing = ReduceLROnPlateau(
+                    self.agent.optimizer,
+                    mode='max',
+                    factor=self.cfg.LR_FACTOR,
+                    patience=self.cfg.LR_PATIENCE,
+                    threshold=self.cfg.LR_THRESHOLD,
+                    min_lr=self.cfg.LR_MIN
+                )
 
         self.metrics = {
-            'Total_Reward': [],  # 这里的 Reward 已经是平滑过的了，但为了画图再存一份
+            'Total_Data': [],  # 这里的 Reward 已经是平滑过的了，但为了画图再存一份
             'Avg_Reward': [],   # 平均reward
-            'Actor_Loss': [],  # 如果 PPO 返回 Loss
-            'Critic_Loss': [],
             'Avg_Latency': [],  # 系统时延
-            'Total_Latency': [],  # 系统时延
+            'Contract_Total_Data': [],  # 如果 PPO 返回 Loss
+            'Contract_Uti': [],
+            'Contract_Total_Latency': [],  # 系统时延
             # 'Data_Throughput': [],  # 总数据量
-            'Acceptance_Rate': [],  # 合同接受率
-            'Learning_Rate': [],  # 监控 LR 变化
-            'UAV_Cost': [],
+            'Pricing_Total_Data': [],  # 合同接受率
+            'Pricing_Uti': [],  # 监控 LR 变化
+            'Pricing_Total_Latency': [],
         }
 
     def run_training(self):
@@ -88,6 +116,7 @@ class FLExecutionRunner:
             episode_reward = []
             episode_time = []
             episode_uav_cost = []
+            episode_total_data = []
             ep_reward = 0
             # 2. Episode 步进循环
             # SFL 通常是一轮决策，所以这里的 steps 可能就是 1，
@@ -100,7 +129,7 @@ class FLExecutionRunner:
 
                 # 2.2 环境交互
                 # 环境内部会进行 IC/IR 检查、能耗计算、奖励计算
-                next_state, reward, done,dn_contract, _ = self.env.step(proc_cont)
+                next_state, reward, done,dn_contract, total_data = self.env.step(proc_cont)
 
                 W_all = np.round(proc_cont[self.env.N_DN:],3) * (self.env.TOTAL_BW/1e6)
 
@@ -120,6 +149,7 @@ class FLExecutionRunner:
                 episode_reward.append(reward)
                 episode_time.append(self.env.uav.max_time)  # 假设 ep_time 是本轮总耗时
                 episode_uav_cost.append(self.env.uav.total_cost)
+                episode_total_data.append(total_data)
                 # 2.6 终止判断
                 if is_terminal:
                     break
@@ -132,6 +162,7 @@ class FLExecutionRunner:
 
             # 3.2 记录与调度
             avg_reward = np.mean(episode_reward)
+            avg_total_data = np.mean(episode_total_data)
             avg_time = np.mean(episode_time)
             true_time = float(episode_time[-1])
             avg_uav_cost = np.mean(episode_uav_cost)
@@ -139,24 +170,50 @@ class FLExecutionRunner:
             avg_loss_critic = np.array(all_loss['loss_critic'])
             # --- 2. 收集数据 ---
             # 这些数据通常是本轮 Episode 的统计值
-            self.metrics['Total_Reward'].append(ep_reward)
-            self.metrics['Avg_Reward'].append(avg_reward)
-            self.metrics['Avg_Latency'].append(avg_time)
-            self.metrics['Total_Latency'].append(true_time)
-            self.metrics['Actor_Loss'].append(avg_loss_actor)
-            self.metrics['Critic_Loss'].append(avg_loss_critic)
-            self.metrics['UAV_Cost'].append(avg_uav_cost)
+            self.metrics['Total_Data'].append(float(avg_total_data))
+            self.metrics['Avg_Reward'].append(float(avg_reward))
+            self.metrics['Avg_Latency'].append(float(avg_time))
+            # self.metrics['Total_Latency'].append(float(true_time))
+            # self.metrics['Actor_Loss'].append(float(avg_loss_actor))
+            # self.metrics['Critic_Loss'].append(float(avg_loss_critic))
+            # self.metrics['UAV_Cost'].append(float(avg_uav_cost))
+
+            if self.cfg.FL_CONTRACT:
+                self.fl_contract_env.reset()
+                experiment = FL_TraditionalContractBaseline(self.fl_contract_env)
+                contract = experiment.get_action()
+                # 环境内部会进行 IC/IR 检查、能耗计算、奖励计算
+                next_state, contract_reward, done, dn_contract2, contract_total_data = self.fl_contract_env.step2(contract)
+
+                self.metrics['Contract_Total_Data'].append(float(contract_total_data))
+                self.metrics['Contract_Uti'].append(float(contract_reward))
+                self.metrics['Contract_Total_Latency'].append(float(self.fl_contract_env.uav.max_time))
+
+            if self.cfg.FL_PRICING:
+                # env,ppo,ppo_state
+                pricing_state = self.fl_pricing_env.reset()
+                pricing_reward, pricing_time, pricing_total_data, pricing = pricing_run_training(self.fl_pricing_env,
+                                                                                        self.agent_pricing, pricing_state)
+                all_loss = self.agent_pricing.update()
+                self.metrics['Pricing_Total_Data'].append(np.mean(pricing_total_data))
+                self.metrics['Pricing_Uti'].append(np.mean(pricing_reward))
+                self.metrics['Pricing_Total_Latency'].append(np.mean(pricing_time))
+
 
             # 3.3 动态调整学习率 (基于滑动平均奖励)
-            if i_episode >= 1000:
+            if i_episode >= 500:
                 if self.cfg.USE_LR_SCHEDULER:
                     self.scheduler.step(avg_reward)
+
+                if self.cfg.FL_PRICING:
+                    if self.cfg.USE_LR_SCHEDULER:
+                        self.scheduler_pricing.step(np.mean(pricing_reward))
 
             # 3.4 日志打印
             if i_episode % self.cfg.LOG_INTERVAL == 0:
                 # 获取不同部分的 LR 用于监控
                 lrs = self.agent.get_lr_dict() if hasattr(self.agent, 'get_lr_dict') else {'actor': 0}
-                log_msg = f"Ep {i_episode} | Reward: {avg_reward:.2f} |  LR_Cont: {lrs.get('lr', 0):.2e}|true_time: {true_time:.2f}|avg_time: {avg_time:.2f}|avg_cost: {avg_uav_cost:.2f}"
+                log_msg = f"Ep {i_episode} | Reward: {avg_reward:.2f} |  pricing: {np.mean(pricing):.3f}|true_time: {true_time:.2f}|avg_time: {avg_time:.2f}|avg_cost: {avg_uav_cost:.2f}"
                 Log(log_msg)
                 msg = f"dn_contract {dn_contract} "
                 Log(msg,False)

@@ -1,7 +1,7 @@
-from SFL_Contract import TraditionalContractBaseline
+from SFL_Contract2 import TraditionalContractBaseline
 from Contract_Config import Config
 import numpy as np
-from Contract_Env_2 import Contract_Environment
+from Contract_Env_2 import Contract_Env2ironment
 
 # 传统合同的计算过程
 def run_tct(config):
