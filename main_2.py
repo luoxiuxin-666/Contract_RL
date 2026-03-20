@@ -127,6 +127,7 @@ class SFLExecutionRunner:
             'dn_uti': 0.0,
             'uav_cost': 0.0,
         }
+        contract_action = {}
         all_log_max_reward = []
         for i_episode in range(1, self.cfg.TOTAL_EPISODES + 1):
             # 1. 重置环境，获取初始状态
@@ -147,7 +148,7 @@ class SFLExecutionRunner:
 
                 # 2.2 环境交互
                 # 环境内部会进行 IC/IR 检查、能耗计算、奖励计算
-                next_state, reward, done, uav_info, dn_contract, cn_contract, uti_, total_data = self.env.step(
+                next_state, reward, done, uav_info, dn_contract, cn_contract, uti_, total_data, action = self.env.step(
                     proc_cont)
 
                 W_all = np.round(proc_cont[self.env.N_DN + self.env.M_CN:-self.env.M_CN], 3) * (self.env.TOTAL_BW / 1e6)
@@ -181,6 +182,8 @@ class SFLExecutionRunner:
                         'dn_uti': uti_['dn_uti'],
                         'uav_cost': uti_['uav_uti'],
                     }
+                    contract_action = action
+
                 # 2.6 终止判断
                 if is_terminal:
                     break
@@ -200,6 +203,11 @@ class SFLExecutionRunner:
                 }
                 for log_reward in all_log_max_reward:
                     Log(log_reward, False)
+                dn_utility_matrix, cn_utility_matrix, dn_ic_rate, cn_ic_rate, dn_ic, cn_ic = self.env.calculate_utility_matrix(
+                    contract_action)
+                if dn_ic_rate == 1 and cn_ic_rate == 1:
+                    plot_ic_verification(self.env, dn_utility_matrix, 'DN')
+                    plot_ic_verification(self.env, cn_utility_matrix, 'CN')
             # 3.1 更新 PPO 策略
             # PPO 是 On-policy 算法，通常在收集完一个完整的 Episode (或一定数量的 Steps) 后更新
             all_loss = self.agent.update()
@@ -259,11 +267,13 @@ class SFLExecutionRunner:
                 Log(log_msg, False)
                 msg = f"dn_contract {dn_contract} | cn_contract {cn_contract}"
                 #--------测试--------
-                plot_ic_verification(self.env,dn_contract,'DN')
-                plot_ic_verification(self.env,cn_contract,'CN')
                 Log(msg, False)
                 msg = f" W_all is {W_all}"
                 Log(msg, False)
+                # dn_utility_matrix, cn_utility_matrix, dn_ic_rate, cn_ic_rate,dn_ic,cn_ic = self.env.calculate_utility_matrix(contract_action)
+                # if dn_ic_rate == 1 and cn_ic_rate == 1:
+                #     plot_ic_verification(self.env, dn_utility_matrix, 'DN')
+                #     plot_ic_verification(self.env, cn_utility_matrix, 'CN')
                 # if compliance_rate!=1:
                 #     Log(f"============== compliance_rate is 1 =================",False)
 
@@ -286,8 +296,9 @@ class SFLExecutionRunner:
             #     print(f"---the cn is {self.env.uav.data}")
 
         # 绘制IC验证曲线
-        cn_contract = log_max_reward['cn_contract']
-        dn_contract = log_max_reward['dn_contract']
+        dn_utility_matrix, cn_utility_matrix = self.env.calculate_utility_matrix(contract_action)
+        plot_ic_verification(self.env, dn_utility_matrix, 'DN')
+        plot_ic_verification(self.env, cn_utility_matrix, 'CN')
 
         return self.metrics
 

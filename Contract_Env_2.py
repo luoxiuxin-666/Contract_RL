@@ -873,6 +873,110 @@ class Contract_Environment():
                 Rn_desc[k] = cost_curr_own + Uti_DN[k]
         return Rn_desc
 
+    def calculate_utility_matrix(self, action):
+        '''
+        计算效用矩阵，并同时验证 IC (激励相容) 约束的满足概率。
+
+        返回:
+            dn_utility_matrix (ndarray): 数据节点效用矩阵 N x N
+            cn_utility_matrix (ndarray): 算力节点效用矩阵 M x M
+            dn_ic_rate (float): 数据节点满足 IC 的比例 [0.0 ~ 1.0]
+            cn_ic_rate (float): 算力节点满足 IC 的比例 [0.0 ~ 1.0]
+        '''
+        N = self.N_DN
+        M = self.M_CN
+
+        # 1. 提取动作参数
+        Dn = action['Dn']
+        Rn = action['Rn']
+        Rm = action['Rm']
+        Fm = action['fm']
+        cn2dn_list = action['cn2dn_list']
+        dn_bw = action['bandwidth'][:N]
+        cn_bw = action['bandwidth'][N:]
+
+        # 2. 初始化矩阵
+        dn_utility_matrix = np.zeros((N, N))
+        cn_utility_matrix = np.zeros((M, M))
+
+        # 用于记录满足 IC 的节点数量
+        dn_ic_count = 0
+        cn_ic_count = 0
+
+        dn_ic = np.ones(N)
+        cn_ic = np.ones(M)
+        # 容忍浮点数误差的阈值 (非常关键，否则可能因为 0.0000001 的差别被误判为违反 IC)
+        TOLERANCE = 1e-5
+
+        # =========================================================
+        # 3. 评估数据节点 (DN)
+        # =========================================================
+        for i in range(N):
+            dn_node = self.DN_list[i]  # 物理节点 i
+
+            # 计算该节点面对所有 N 个合同的效用
+            for j in range(N):
+                bw = dn_bw[j]
+                d_req = Dn[j]
+                r_offer = Rn[j]
+                # 注意参数顺序要与 evaluate_contract 定义一致
+                uti = dn_node.evaluate_contract(bw, d_req, r_offer, Flag=False)
+                dn_utility_matrix[i, j] = uti
+
+            # --- 验证 DN 的 IC ---
+            # 获取节点 i 选自己合同的效用 (对角线元素)
+            u_own = dn_utility_matrix[i, i]
+
+            # 检查是否有任何其他合同的效用 严格大于 自己的合同
+            # 如果没有，说明满足 IC
+            is_ic_satisfied = True
+            for j in range(N):
+                if i != j and dn_utility_matrix[i, j] > u_own + TOLERANCE:
+                    is_ic_satisfied = False
+                    dn_ic[i] = 0
+                    break  # 只要发现一个更好的，就违反了 IC
+
+            if is_ic_satisfied:
+                dn_ic_count += 1
+
+        # =========================================================
+        # 4. 评估算力节点 (CN)
+        # =========================================================
+        for i in range(M):
+            cn_node = self.CN_list[i]
+            bw_i = cn_bw[i]  # 注意：在评估其他合同时，带宽是用自己的还是合同里的？通常是用合同配好的带宽。
+            # 这里我按您的代码逻辑，使用对应合同 j 的带宽会更合理，或者使用全局平均带宽。
+            # 假设这里使用该节点自身被分配的带宽 (与您的原代码保持一致)
+
+            for j in range(M):
+                dn_list = cn2dn_list[j]
+                rm = Rm[j]
+                fm = Fm[j]
+
+                uti = cn_node.evaluate_contract(bw_i, dn_list, fm, flag=False, R_offer=rm)
+                cn_utility_matrix[i, j] = uti
+
+            # --- 验证 CN 的 IC ---
+            u_own = cn_utility_matrix[i, i]
+            is_ic_satisfied = True
+
+            for j in range(M):
+                if i != j and cn_utility_matrix[i, j] > u_own + TOLERANCE:
+                    is_ic_satisfied = False
+                    cn_ic[i] = 0
+                    break
+
+            if is_ic_satisfied:
+                cn_ic_count += 1
+
+        # =========================================================
+        # 5. 计算概率并返回
+        # =========================================================
+        dn_ic_rate = dn_ic_count / N
+        cn_ic_rate = cn_ic_count / M
+
+        return dn_utility_matrix, cn_utility_matrix, dn_ic_rate, cn_ic_rate,dn_ic,cn_ic
+
     def weighted_greedy_routing(self, Dn_list, node_weights, num_cn):
         """
         输入:
@@ -956,21 +1060,22 @@ class Contract_Environment():
 
         # 计算效用和状态
         dn_contract, cn_contract = self.action_to_contract(all_action)
+        dn_utility_matrix, cn_utility_matrix, dn_ic_rate, cn_ic_rate,dn_ic,cn_ic = self.calculate_utility_matrix(all_action)
         compliance_rate, violations, ic_list = self.check_ic_status(all_action)
-        self.cn_ic = ic_list
-
-        uti_, dn_ir, cn_ir, uav_dn_list, uav_cn_list = self.calculate_Utility(all_action, ic_list)
+        print('compliance_rate:', compliance_rate)
+        self.cn_ic = cn_ic
+        self.dn_ic = dn_ic
+        uti_, dn_ir, cn_ir, uav_dn_list, uav_cn_list = self.calculate_Utility(all_action, dn_ic,cn_ic)
         uav_info = self.uav.calculate_cost(uav_dn_list, uav_cn_list)
         # print(self.uav.total_cost,self.uav.total_time)
         self.uav.utility = uti_['uav_uti'] - uav_info['total_cost']
-
         self.state = np.hstack([self.dn_ir, self.cn_ir, self.DN2UAVSINR, self.CN2UAVSINR])
         self.reward = self.uav.utility
         if self.reward < 0:
             uav_info = self.uav.calculate_cost(uav_dn_list, uav_cn_list)
             print(f"self.reward is {self.reward}")
         total_data = sum(all_action['Dn'])
-        return self.state, float(self.reward), False, uav_info, dn_contract, cn_contract, uti_, total_data
+        return self.state, float(self.reward), False, uav_info, dn_contract, cn_contract, uti_, total_data,all_action
 
     def check_ic_status(self, action_dict):
         """
@@ -1043,7 +1148,7 @@ class Contract_Environment():
         cn_contract = group_idx + list(H_alpha) + list(fm) + list(all_action['Rm'])
         return dn_contract, cn_contract
 
-    def calculate_Utility(self, all_action, ic_list, flag=False):
+    def calculate_Utility(self, all_action, dn_ic,cn_ic, flag=False):
         uav_utility = 0
         Dn = all_action['Dn']
         Rn = all_action['Rn']
@@ -1061,6 +1166,8 @@ class Contract_Environment():
             if uti < 0:
                 dn_uti += uti
                 dn_ir[i] = 0
+            elif dn_ic[i] == 0:
+                dn_uti -= 100
             else:
                 dn_uti += self.tau_dn * self.uav.DN_uti(dn)
                 dn_ir[i] = 1
@@ -1079,7 +1186,7 @@ class Contract_Environment():
             if uti < 0:
                 cn_uti += uti
                 cn_ir[i] = 0
-            elif ic_list[i] == 0:
+            elif cn_ic[i] == 0:
                 cn_uti -= 100
             else:
                 cn_uti += self.tau_cn * self.uav.CN_uti(cn)
@@ -1128,9 +1235,9 @@ class Contract_Environment():
         fm = np.round(contract['fm'] / 1e9, 2)
         H_alpha = np.round(contract['beta_m'] / 1e3, 2)
         cn_contract = list(contract['routing']) + list(H_alpha) + list(fm) + list(contract['Rm'])
-        compliance_rate, violations, ic_list = self.check_ic_status(contract)
+        dn_utility_matrix, cn_utility_matrix, dn_ic_rate, cn_ic_rate,dn_ic,cn_ic = self.calculate_utility_matrix(contract)
 
-        uti_, dn_ir, cn_ir, uav_dn_list, uav_cn_list = self.calculate_Utility(contract, ic_list)
+        uti_, dn_ir, cn_ir, uav_dn_list, uav_cn_list = self.calculate_Utility(contract, dn_ic,cn_ic)
 
         uav_info = self.uav.calculate_cost(uav_dn_list, uav_cn_list)
 

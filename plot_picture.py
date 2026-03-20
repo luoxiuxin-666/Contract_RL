@@ -157,7 +157,7 @@ def plot_learning_curves(metrics_dict, current_episode,mode, window_size=20):
     print(f"[Plotter] Curves updated at {save_path}")
 
 
-def plot_ic_verification(env, action_dict, node_type='DN', save_dir="./results/plots"):
+def plot_ic_verification(env, utility_matrix, node_type='DN', save_dir="./results/plots"):
     """
     绘制合同的 IC (激励相容) 验证图。
 
@@ -168,85 +168,21 @@ def plot_ic_verification(env, action_dict, node_type='DN', save_dir="./results/p
     - save_dir: 图片保存路径
     """
     os.makedirs(save_dir, exist_ok=True)
-
-    # 获取节点数量
     N = len(env.DN_list) if node_type == 'DN' else len(env.CN_list)
 
-    bw = 2*1e6
     # 提取合同菜单 (必须保证是有序的)
     if node_type == 'DN':
-        # 数据合同: (Data_k, Pay_k)
-        menu_effort = action_dict['Dn']
-        menu_pay = action_dict['Rn']
-        # 为了计算效用，还需要对应的带宽
-        menu_bw = action_dict['bandwidth'][:N]
         nodes = env.DN_list
         title = "Incentive Compatibility (IC) Verification for Data Nodes"
         xlabel = "Contract Menu Index (Sorted by Data Size $D_n$)"
 
     elif node_type == 'CN':
-        # 算力合同: (Load_k, Freq_k, Pay_k)
-        menu_effort = action_dict['beta_m']  # 物理负载量
-        menu_freq = action_dict['fm']  # 强制频率
-        menu_pay = action_dict['Rm_total']  # 总支付
-        # CN 也需要带宽来算传输能耗
-        menu_bw = action_dict['bandwidth'][env.N_DN: env.N_DN + N]
         nodes = env.CN_list
         title = "Incentive Compatibility (IC) Verification for Compute Nodes"
         xlabel = "Contract Menu Index (Sorted by Workload $\\beta_m$)"
 
     else:
         raise ValueError("node_type must be 'DN' or 'CN'")
-
-    # =========================================================
-    # 核心计算：计算效用矩阵 U[i][j]
-    # U[i][j] 表示：真实的物理节点 i，如果强行选择合同 j，能获得多少效用？
-    # =========================================================
-    utility_matrix = np.zeros((N, N))
-
-    for i in range(N):
-        real_node = nodes[i]  # 物理节点 i
-
-        for j in range(N):
-            # 节点 i 尝试执行合同 j
-            if node_type == 'DN':
-                target_data = menu_effort[j]
-                target_pay = menu_pay[j]
-                target_bw = menu_bw[j]
-
-                # 调用 DN 自身的成本计算函数 (使用真实私有属性)
-                # 注意：evaluate_contract 必须返回纯粹的 Utility 标量
-                # 这里假设 flag=False 不会修改节点状态
-                uti = real_node.evaluate_contract(target_bw, target_data, target_pay, Flag=False)
-
-            elif node_type == 'CN':
-                target_load = menu_effort[j]
-                target_freq = menu_freq[j]
-                target_pay = menu_pay[j]
-                target_bw = menu_bw[j]
-
-                # 算力节点评估 (需要传入模拟的 DN 列表，这里简化为纯负载估算)
-                # 因为在实际中，如果 CN i 接了合同 j，它的真实负载是由路由决定的。
-                # 为了画 IC 图，我们直接强行计算它处理 target_load 的物理能耗。
-                # E_phy = mu * load * f^2 + e_trans
-                # U = Pay - (lambda / theta_i) * E_phy
-
-                # 如果您的 evaluate_contract 支持直接传负载大小：
-                # (为绘图简便，这里直接手算成本，确保与环境物理公式绝对一致)
-                MU = 1e-27 * 1e9
-                E_COMM = 0.01
-                LAMBDA = 1.0
-
-                # 物理能耗
-                e_phy = MU * target_load * (target_freq ** 2) + E_COMM * target_load
-
-                # 私有电量 (Type)
-                theta_i = real_node.energy_remaining + 1e-5
-
-                # 效用 = 收入 - 心理成本
-                uti = target_pay - LAMBDA * (e_phy / theta_i)
-
-            utility_matrix[i, j] = uti
 
     # =========================================================
     # 绘图逻辑
@@ -267,9 +203,11 @@ def plot_ic_verification(env, action_dict, node_type='DN', save_dir="./results/p
 
         # 为了图例清晰，可以标注一下节点的特征
         if node_type == 'DN':
-            label_str = f"Type {i} (Cost: {nodes[i].unit_cost:.2f})"
+            # label_str = f"Type {i} (Cost: {nodes[i].unit_cost:.2f})"
+            label_str = f"Type {i}"
         else:
-            label_str = f"Type {i} (Energy: {nodes[i].energy_remaining:.0f})"
+            # label_str = f"Type {i} (Energy: {nodes[i].type:.0f})"
+            label_str = f"Type {i} "
 
         # 画线
         ax.plot(range(N), y_values, marker=markers[i % len(markers)],
