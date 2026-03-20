@@ -30,7 +30,7 @@ def smooth_data(data, window_size=10):
     return np.concatenate([padding, smoothed])
 
 
-def plot_learning_curves(metrics_dict, current_episode, window_size=20):
+def plot_learning_curves(metrics_dict, current_episode,mode, window_size=20):
     """
     改进版绘图函数：
     1. 自适应子图布局
@@ -149,9 +149,177 @@ def plot_learning_curves(metrics_dict, current_episode, window_size=20):
 
     # 4. 保存
     plt.tight_layout(rect=[0, 0, 1, 0.96])  # 留出标题空间
-
-    save_path = os.path.join(RESULT_DIR, 'training_curves.png')
+    name = mode + '_' + 'training_curves.png'
+    save_path = os.path.join(RESULT_DIR, name)
     plt.savefig(save_path, dpi=100)
 
     plt.close(fig)  # 极其重要：关闭图像释放内存
     print(f"[Plotter] Curves updated at {save_path}")
+
+
+def plot_ic_verification(env, action_dict, node_type='DN', save_dir="./results/plots"):
+    """
+    绘制合同的 IC (激励相容) 验证图。
+
+    参数:
+    - env: 当前的 SFL 环境对象 (包含物理节点的真实属性)
+    - action_dict: 包含生成合同的字典 (Dn, Rn, Rm_total, fm, beta_m 等)
+    - node_type: 'DN' (数据节点) 或 'CN' (算力节点)
+    - save_dir: 图片保存路径
+    """
+    os.makedirs(save_dir, exist_ok=True)
+
+    # 获取节点数量
+    N = len(env.DN_list) if node_type == 'DN' else len(env.CN_list)
+
+    bw = 2*1e6
+    # 提取合同菜单 (必须保证是有序的)
+    if node_type == 'DN':
+        # 数据合同: (Data_k, Pay_k)
+        menu_effort = action_dict['Dn']
+        menu_pay = action_dict['Rn']
+        # 为了计算效用，还需要对应的带宽
+        menu_bw = action_dict['bandwidth'][:N]
+        nodes = env.DN_list
+        title = "Incentive Compatibility (IC) Verification for Data Nodes"
+        xlabel = "Contract Menu Index (Sorted by Data Size $D_n$)"
+
+    elif node_type == 'CN':
+        # 算力合同: (Load_k, Freq_k, Pay_k)
+        menu_effort = action_dict['beta_m']  # 物理负载量
+        menu_freq = action_dict['fm']  # 强制频率
+        menu_pay = action_dict['Rm_total']  # 总支付
+        # CN 也需要带宽来算传输能耗
+        menu_bw = action_dict['bandwidth'][env.N_DN: env.N_DN + N]
+        nodes = env.CN_list
+        title = "Incentive Compatibility (IC) Verification for Compute Nodes"
+        xlabel = "Contract Menu Index (Sorted by Workload $\\beta_m$)"
+
+    else:
+        raise ValueError("node_type must be 'DN' or 'CN'")
+
+    # =========================================================
+    # 核心计算：计算效用矩阵 U[i][j]
+    # U[i][j] 表示：真实的物理节点 i，如果强行选择合同 j，能获得多少效用？
+    # =========================================================
+    utility_matrix = np.zeros((N, N))
+
+    for i in range(N):
+        real_node = nodes[i]  # 物理节点 i
+
+        for j in range(N):
+            # 节点 i 尝试执行合同 j
+            if node_type == 'DN':
+                target_data = menu_effort[j]
+                target_pay = menu_pay[j]
+                target_bw = menu_bw[j]
+
+                # 调用 DN 自身的成本计算函数 (使用真实私有属性)
+                # 注意：evaluate_contract 必须返回纯粹的 Utility 标量
+                # 这里假设 flag=False 不会修改节点状态
+                uti = real_node.evaluate_contract(target_bw, target_data, target_pay, Flag=False)
+
+            elif node_type == 'CN':
+                target_load = menu_effort[j]
+                target_freq = menu_freq[j]
+                target_pay = menu_pay[j]
+                target_bw = menu_bw[j]
+
+                # 算力节点评估 (需要传入模拟的 DN 列表，这里简化为纯负载估算)
+                # 因为在实际中，如果 CN i 接了合同 j，它的真实负载是由路由决定的。
+                # 为了画 IC 图，我们直接强行计算它处理 target_load 的物理能耗。
+                # E_phy = mu * load * f^2 + e_trans
+                # U = Pay - (lambda / theta_i) * E_phy
+
+                # 如果您的 evaluate_contract 支持直接传负载大小：
+                # (为绘图简便，这里直接手算成本，确保与环境物理公式绝对一致)
+                MU = 1e-27 * 1e9
+                E_COMM = 0.01
+                LAMBDA = 1.0
+
+                # 物理能耗
+                e_phy = MU * target_load * (target_freq ** 2) + E_COMM * target_load
+
+                # 私有电量 (Type)
+                theta_i = real_node.energy_remaining + 1e-5
+
+                # 效用 = 收入 - 心理成本
+                uti = target_pay - LAMBDA * (e_phy / theta_i)
+
+            utility_matrix[i, j] = uti
+
+    # =========================================================
+    # 绘图逻辑
+    # =========================================================
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # 定义一些颜色和标记，方便区分不同的 Type
+    colors = plt.cm.viridis(np.linspace(0, 1, N))
+    markers = ['o', 's', '^', 'D', 'v', 'p', '*', 'h', 'x', '+']
+
+    # 遍历每个物理节点 (画一条曲线)
+    for i in range(N):
+        # 提取节点 i 在面对所有合同 j 时的效用数组
+        y_values = utility_matrix[i, :]
+
+        # 找到最高点 (理论上应该等于 i，如果排序对齐的话)
+        best_menu_idx = np.argmax(y_values)
+
+        # 为了图例清晰，可以标注一下节点的特征
+        if node_type == 'DN':
+            label_str = f"Type {i} (Cost: {nodes[i].unit_cost:.2f})"
+        else:
+            label_str = f"Type {i} (Energy: {nodes[i].energy_remaining:.0f})"
+
+        # 画线
+        ax.plot(range(N), y_values, marker=markers[i % len(markers)],
+                color=colors[i], linewidth=2, label=label_str)
+
+        # 在最高点打个星星高亮标记
+        ax.scatter(best_menu_idx, y_values[best_menu_idx],
+                   s=200, facecolors='none', edgecolors='red', linewidths=2, zorder=5)
+
+    # 装饰图表
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_ylabel("Utility ($U$)", fontsize=12)
+
+    # 设置 X 轴刻度为整数 (0, 1, 2...)
+    ax.set_xticks(range(N))
+    ax.set_xticklabels([f"Menu {j}" for j in range(N)])
+
+    # 添加网格线
+    ax.grid(True, linestyle='--', alpha=0.6)
+
+    # 图例放在外面防止遮挡曲线
+    ax.legend(title="Node True Type", bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    plt.tight_layout()
+
+    # 保存
+    save_path = os.path.join(save_dir, f'IC_Verification_{node_type}.png')
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+    print(f"[{node_type}] IC verification plot saved to {save_path}")
+
+    # =========================================================
+    # 附加功能：打印终端矩阵 (方便查错)
+    # =========================================================
+    print(f"\n=== {node_type} Utility Matrix (Rows: Nodes, Cols: Menus) ===")
+    # 打印表头
+    header = "Node/Menu | " + " | ".join([f"M{j:<5}" for j in range(N)])
+    print(header)
+    print("-" * len(header))
+    # 打印每一行
+    for i in range(N):
+        row_str = f"Node {i:<4} | "
+        for j in range(N):
+            val = utility_matrix[i, j]
+            # 如果是最大值，加个星号
+            if j == np.argmax(utility_matrix[i, :]):
+                row_str += f"{val:>5.1f}* | "
+            else:
+                row_str += f"{val:>6.1f} | "
+        print(row_str)
+    print("=" * 60)

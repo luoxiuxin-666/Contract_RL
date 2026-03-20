@@ -345,8 +345,8 @@ class UAV:
         self.location = location if location else np.array([50, 50, 100])  # 高度100
         self.total_data = config_uav.max_data_size
 
-        self.beta_1 = config_uav.beta_1
-        self.beta_2 = config_uav.beta_2
+        # self.beta_1 = config_uav.beta_1
+        # self.beta_2 = config_uav.beta_2
         self.dn_prob = config_uav.dn_prob
 
         self.DN_list = None

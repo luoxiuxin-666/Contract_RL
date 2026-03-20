@@ -104,8 +104,8 @@ class DataNode:
 class FL_UAV:
     def __init__(self, config):
         self.total_bw = config.TOTAL_BW
-        self.beta_1 = config.beta_1  # 收益系数
-        self.beta_2 = config.beta_2  # 成本系数
+        # self.beta_1 = config.beta_1  # 收益系数
+        # self.beta_2 = config.beta_2  # 成本系数
         self.N_DN = config.N_DN
 
         self.E_h = config.E_h

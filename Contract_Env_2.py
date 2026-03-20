@@ -383,13 +383,15 @@ class ComputeNode:
 # ==========================================
 class UAV:
     def __init__(self, config_uav, location=None):
+        self.cfg = config_uav
         self.total_bandwidth = config_uav.TOTAL_BW  # W_total
         self.location = location if location else np.array([50, 50, 100])  # 高度100
         self.total_data = config_uav.max_data_size
 
-        self.beta_1 = config_uav.beta_1
+        self.beta_1 = 0
         self.beta_2 = config_uav.beta_2
-        self.alpha_dn = config_uav.alpha_dn
+        self.mode = 'ppo'
+        self.alpha_dn = 0
 
         self.DN_list = None
         self.CN_list = None
@@ -451,7 +453,7 @@ class UAV:
     def DN_uti(self, dn):
         Dn = dn.D_req / 500  # 缩小一下区间
         uti = np.log(1 + Dn)
-        r = dn.R_offer / 500
+        r = dn.R_offer / 700
         uti = uti - r
         uti = self.alpha_dn * uti
         # if uti < 0:
@@ -468,7 +470,7 @@ class UAV:
             fm = (cn.kappa * cn.fm * cn.max_freq) / 1e9
         else:
             fm = (cn.kappa * cn.fm) / 1e9
-        log_1 = np.log(1 + H_alpha / 500)
+        log_1 = np.log(1 + H_alpha / 1000)
         log_2 = (H_alpha / fm)
         A = self.beta_1 * log_1
         B = self.beta_2 * log_2
@@ -494,6 +496,16 @@ class UAV:
         self.max_total_cost = 0.0
         self.max_dn_uti = 0.0
         self.max_cn_uti = 0.0
+
+        if self.mode == 'ppo':
+            self.alpha_dn = self.cfg.alpha_sfl_ppo
+            self.beta_1 = self.cfg.beta_sfl_ppo
+        elif self.mode == 'contract':
+            self.alpha_dn = self.cfg.alpha_sfl_contract
+            self.beta_1 = self.cfg.beta_sfl_contract
+        elif self.mode == 'pricing':
+            self.alpha_dn = self.cfg.alpha_pricing
+            self.beta_1 = self.cfg.beta_pricing
 
 
 class Contract_Environment():

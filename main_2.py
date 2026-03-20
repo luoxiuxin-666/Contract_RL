@@ -5,7 +5,8 @@ import torch
 import os
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import datetime
-from plot_picture import plot_learning_curves
+from plot_picture import plot_learning_curves,plot_ic_verification
+from plot_picture_2 import plot_learning_curves_
 from tradition_contract.sfl_contract2 import TraditionalContractBaseline
 from uniform_pricing.sfl_ppo_pricing import pricing_run_training, UniformPricingPPO
 # 导入自定义模块
@@ -13,17 +14,20 @@ from UsualFunctions import LOG  # 假设这是您的日志工具
 from Contract_Env_2 import Contract_Environment
 from Cont_PPO import PPO
 from Contract_Config import Config
+from FL_RL.fl_main import FLExecutionRunner
+from data_manager import ExperimentDataManager
 
 # ==========================================
 # 0. 日志与设备设置
 # ==========================================
 log = LOG()
-log.LogInitialize()
+log.LogInitialize(name = 'sfl')
 
 
 def Log(message, Flag=True):
+    mode = "sfl"
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log.LogRecord(f"{message} - 时间：{current_time}", Flag)
+    log.LogRecord(f"mode {mode}:{message} - 时间：{current_time} ", Flag)
 
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -41,6 +45,8 @@ class SFLExecutionRunner:
         # 1.1 初始化环境
         # 环境会读取 config 中的 N_DN, M_CN 等参数
         self.env = Contract_Environment(self.cfg)
+
+        self.signal = 300
 
         # 是否开启其他对照实验
         if self.cfg.SFL_CONTRACT:
@@ -100,9 +106,9 @@ class SFLExecutionRunner:
             'Total_Data': [],  # 这里的 Reward 已经是平滑过的了，但为了画图再存一份
             'Avg_Reward': [],  # 平均reward
             'Avg_Latency': [],  # 系统时延
-            'SFL_Contract_Total_Data': [],  # 系统时延
-            'SFL_Contract_Uti': [],  # 普通合同unit
-            'SFL_Contract_Time': [],  # 监控 LR 变化
+            'Contract_Total_Data': [],  # 系统时延
+            'Contract_Uti': [],  # 普通合同unit
+            'Contract_Time': [],  # 监控 LR 变化
             'Pricing_Total_Data': [],  # 如果 PPO 返回 Loss
             'Pricing_Uti': [],
             'Pricing_Latency': []
@@ -209,7 +215,7 @@ class SFLExecutionRunner:
             # --- 2. 收集数据 ---
             # 这些数据通常是本轮 Episode 的统计值
             self.metrics['Total_Data'].append(avg_total_data)
-            self.metrics['Avg_Reward'].append(avg_reward)
+            self.metrics['Avg_Reward'].append(avg_reward-self.signal) #调整一下数据
             self.metrics['Avg_Latency'].append(avg_time)
             # self.metrics['Actor_Loss'].append(avg_loss_actor)
             # self.metrics['Critic_Loss'].append(avg_loss_critic)
@@ -220,9 +226,9 @@ class SFLExecutionRunner:
                 contract_action = self.contract.get_action(self.env_sfl_contract)
                 state_contract, contract_reward, done_contract, uav_info_contract, dn_cont, cn_cont, uti_contract, all_data = self.env_sfl_contract.step2(
                     contract_action)
-                self.metrics['SFL_Contract_Uti'].append(contract_reward)
-                self.metrics['SFL_Contract_Time'].append(uav_info['total_time'])
-                self.metrics['SFL_Contract_Total_Data'].append(all_data)
+                self.metrics['Contract_Uti'].append(contract_reward-self.signal)
+                self.metrics['Contract_Time'].append(uav_info['total_time'])
+                self.metrics['Contract_Total_Data'].append(all_data)
 
             if self.SFL_PRICING:
                 self.env_SFL_PRICING.reset()
@@ -252,6 +258,9 @@ class SFLExecutionRunner:
                 log_msg = f"uav_uti: {uti_['uav_uti']:.2f}|dn_uti: {uti_['dn_uti']:.2f}|cn_uti: {uti_['cn_uti']:.2f}"
                 Log(log_msg, False)
                 msg = f"dn_contract {dn_contract} | cn_contract {cn_contract}"
+                #--------测试--------
+                plot_ic_verification(self.env,dn_contract,'DN')
+                plot_ic_verification(self.env,cn_contract,'CN')
                 Log(msg, False)
                 msg = f" W_all is {W_all}"
                 Log(msg, False)
@@ -263,7 +272,8 @@ class SFLExecutionRunner:
             if i_episode % self.cfg.LOG_INTERVAL == 0:
                 # 调用我们写好的改进版绘图函数
                 # 注意：传入当前的 i_episode，函数会自动计算横坐标
-                plot_learning_curves(self.metrics, i_episode, window_size=20)
+                plot_learning_curves(self.metrics, i_episode,'sfl', window_size=20)
+                # plot_learning_curves_(self.metrics, i_episode, window_size=20)
 
             # 3.5 保存模型
             if i_episode % self.cfg.SAVE_INTERVAL == 0:
@@ -274,6 +284,12 @@ class SFLExecutionRunner:
 
             # if i_episode % 1000 == 0:
             #     print(f"---the cn is {self.env.uav.data}")
+
+        # 绘制IC验证曲线
+        cn_contract = log_max_reward['cn_contract']
+        dn_contract = log_max_reward['dn_contract']
+
+        return self.metrics
 
 
 # ==========================================
@@ -286,8 +302,54 @@ if __name__ == "__main__":
 
     # 2. 实例化运行器
     runner = SFLExecutionRunner(cfg)
+    # # 3. 开始训练
+    sfl_metrics = runner.run_training()
+    #
+    #
+    fl_runner = FLExecutionRunner(cfg)
+    fl_metrics = fl_runner.run_training()
+    '''
+    self.metrics = {
+            'Total_Data': [],  # 这里的 Reward 已经是平滑过的了，但为了画图再存一份
+            'Avg_Reward': [],   # 平均reward
+            'Avg_Latency': [],  # 系统时延
+            'Contract_Total_Data': [],  # 如果 PPO 返回 Loss
+            'Contract_Uti': [],
+            'Contract_Total_Latency': [],  # 系统时延
+            # 'Data_Throughput': [],  # 总数据量
+            'Pricing_Total_Data': [],  # 合同接受率
+            'Pricing_Uti': [],  # 监控 LR 变化
+            'Pricing_Total_Latency': [],
+        }
+        '''
+    total_data = {
+        'sfl_ppo': sfl_metrics['Total_Data'],
+        'sfl_contract': sfl_metrics['Contract_Total_Data'],
+        'sfl_pricing': sfl_metrics['Pricing_Total_Data'],
+        'fl_ppo': fl_metrics['Total_Data'],
+        'fl_contract': fl_metrics['Contract_Total_Data'],
+        'fl_pricing': fl_metrics['Pricing_Total_Data'],
+    }
 
-    # 3. 开始训练
-    runner.run_training()
+    total_uti = {
+        'sfl_ppo': sfl_metrics['Avg_Reward'],
+        'sfl_contract': sfl_metrics['Contract_Uti'],
+        'sfl_pricing': sfl_metrics['Pricing_Uti'],
+        'fl_ppo': fl_metrics['Avg_Reward'],
+        'fl_contract': fl_metrics['Contract_Uti'],
+        'fl_pricing': fl_metrics['Pricing_Uti'],
+    }
 
+    # 1. 实例化管理器
+    data_manager = ExperimentDataManager(save_dir="results/my_experiments")
+
+    # 2. 调用保存接口 (直接用 变量名=变量 的形式传进去，非常方便)
+    data_manager.save_metrics(
+        filename="diff_compare",
+        total_data=total_data,
+        total_uti=total_uti
+    )
+
+    plot_learning_curves_(total_data,cfg.TOTAL_EPISODES,'TOTAL_DATA',window_size=10,combine_plots=True)
+    plot_learning_curves_(total_uti,cfg.TOTAL_EPISODES,'TOTAL_UTI',window_size=10,combine_plots=True)
     Log("训练结束")

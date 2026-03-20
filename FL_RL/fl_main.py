@@ -10,20 +10,21 @@ from tradition_contract.fl_contract import FL_TraditionalContractBaseline
 from uniform_pricing.fl_ppo_pricing import PPO_FL_UniformPricing,pricing_run_training
 # 导入自定义模块
 from UsualFunctions import LOG  # 假设这是您的日志工具
-from FL_Env import FLEnvironment
-from PPO_FL import PPO_FL
+from FL_RL.FL_Env import FLEnvironment
+from FL_RL.PPO_FL import PPO_FL
 from Contract_Config import Config
 
 # ==========================================
 # 0. 日志与设备设置
 # ==========================================
 log = LOG()
-log.LogInitialize()
+log.LogInitialize(name = 'fl')
 
 
 def Log(message,Flag=True):
+    mode = "fl"
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log.LogRecord(f"{message} - 时间：{current_time}",Flag)
+    log.LogRecord(f"mode {mode}:{message} - 时间：{current_time}",Flag)
 
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -227,7 +228,7 @@ class FLExecutionRunner:
             if i_episode % self.cfg.LOG_INTERVAL == 0:
                 # 调用我们写好的改进版绘图函数
                 # 注意：传入当前的 i_episode，函数会自动计算横坐标
-                plot_learning_curves(self.metrics, i_episode, window_size=20)
+                plot_learning_curves(self.metrics, i_episode,'fl', window_size=20)
 
             # 3.5 保存模型
             if i_episode % self.cfg.SAVE_INTERVAL == 0:
@@ -235,6 +236,8 @@ class FLExecutionRunner:
                 if not os.path.exists("./checkpoints"): os.makedirs("./checkpoints")
                 self.agent.save(save_path)
                 Log(f"模型保存: {save_path}")
+
+        return self.metrics
 
 
 

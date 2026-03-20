@@ -18,7 +18,7 @@ class LOG(object):
         # 输出DEBUG及以上级别的信息，针对所有输出的第一层过滤
         self.logger.setLevel(level=logging.DEBUG)
 
-    def LogInitialize(self):
+    def LogInitialize(self,name=""):
         """日志头初始化"""
         # 获取当前时间
         curr_time = datetime.datetime.now()
@@ -32,7 +32,7 @@ class LOG(object):
 
         # 定义日志目录和文件路径
         log_dir = "./log"
-        log_name = os.path.join(log_dir, "%s%s%s.log" % (year, month, day))
+        log_name = os.path.join(log_dir, name+"：%s%s%s.log" % (year, month, day))
 
         # 检查日志目录是否存在，不存在则创建
         if not os.path.exists(log_dir):
